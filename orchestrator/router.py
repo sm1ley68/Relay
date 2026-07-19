@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+from .config import LADDER, Config
+
+UP_KEYWORDS: list[str] = [
+    "архитектур", "миграци", "развяжи", "перепиши", "перепис",
+    "architecture", "migrate", "migration", "decouple", "rewrite", "refactor the",
+]
+DOWN_KEYWORDS: list[str] = [
+    "переименуй", "переименован", "добавь тест", "докстринг", "отформатируй",
+    "формат", "комментар", "rename", "add test", "docstring", "format", "typo",
+]
+
+
+@dataclass
+class RouteDecision:
+    level: str
+    framework: str
+    models: list[str]
+    basis: str
+
+
+def score_to_level(score: int) -> str:
+    idx = max(1, min(5, score)) - 1
+    return LADDER[idx]
+
+
+def _decision(level: str, config: Config, basis: str) -> RouteDecision:
+    lvl = config.levels[level]
+    return RouteDecision(level=level, framework=lvl.framework,
+                         models=list(lvl.models), basis=basis)
+
+
+def estimate_file_count(task: str, repo_root: Path) -> int:
+    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", task))
+    if not tokens:
+        return 0
+    hit_files: set[str] = set()
+    for tok in tokens:
+        try:
+            out = subprocess.run(
+                ["grep", "-rIl", "--include=*.py", tok, str(repo_root)],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for line in out.stdout.splitlines():
+            if line.strip():
+                hit_files.add(line.strip())
+        for path in repo_root.rglob(f"*{tok}*"):
+            if path.is_file():
+                hit_files.add(str(path))
+    return len(hit_files)
+
+
+def heuristic_level(task: str, repo_root: Path,
+                    already_failed: bool) -> tuple[str | None, str]:
+    if already_failed:
+        return "L4", "failed-low"
+
+    low = task.lower()
+    if any(k in low for k in UP_KEYWORDS):
+        return "L4", "up-keyword"
+    if any(k in low for k in DOWN_KEYWORDS):
+        return "L0", "down-keyword"
+
+    files = estimate_file_count(task, repo_root)
+    if files >= 4:
+        return "L4", f"up-files:{files}"
+    if files >= 2:
+        return "L3", f"files:{files}"
+    return None, ""
+
+
+def llm_score(task: str, model: str, api_key: str, *, _opener=None) -> int:
+    prompt = (
+        "Оцени сложность задачи для агента от 1 до 5. "
+        "1 = тривиально, 5 = смена архитектуры. Ответь ОДНОЙ цифрой.\n\n"
+        f"Задача: {task}"
+    )
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 4,
+    }).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json"},
+    )
+    opener = _opener or urllib.request.urlopen
+    with opener(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    content = data["choices"][0]["message"]["content"]
+    m = re.search(r"[1-5]", content)
+    return int(m.group()) if m else 3
+
+
+def classify(task: str, config: Config, *, explicit_level: str | None = None,
+             repo_root: Path, already_failed: bool = False,
+             score_fn=None) -> RouteDecision:
+    # Level 1: explicit prefix wins.
+    if explicit_level:
+        return _decision(explicit_level, config, "explicit")
+
+    # Level 2: heuristics.
+    level, reason = heuristic_level(task, repo_root, already_failed)
+    if level is not None:
+        return _decision(level, config, f"heuristic:{reason}")
+
+    # Level 3: LLM classifier.
+    if score_fn is not None:
+        score = score_fn(task)
+    else:
+        import os
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        score = llm_score(task, config.classifier_model, api_key)
+    return _decision(score_to_level(score), config, f"llm:{score}")
