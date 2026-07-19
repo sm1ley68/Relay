@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orchestrator"
+version = "0.1.0"
+description = "AI-model orchestrator: routes NL tasks to the cheapest capable agentic framework"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+orchestrator = "orchestrator.cli:main"
+
+[tool.setuptools]
+packages = ["orchestrator"]
+
+[tool.setuptools.package-data]
+orchestrator = ["config.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

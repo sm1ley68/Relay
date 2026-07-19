@@ -1,0 +1,42 @@
+max_steps = 40
+cost_ceiling_usd = 0.50
+pro_window_hours = 5.0
+pro_window_max_runs = 40
+classifier_model = "cohere/north-mini-code:free"
+journal_path = "~/.orchestrator/journal.jsonl"
+budget_path = "~/.orchestrator/budget.json"
+test_cmd = ""
+
+# {model}, {prompt}, {steps} are substituted by runner.py
+opencode_cmd = 'opencode run -m {model} "{prompt}"'
+claude_cmd = 'claude -p "{prompt}"'
+
+[levels.L0]
+models = ["cohere/north-mini-code:free"]
+price_in = 0.0
+price_out = 0.0
+framework = "opencode"
+
+[levels.L1]
+models = ["poolside/laguna-m.1:free"]
+price_in = 0.0
+price_out = 0.0
+framework = "opencode"
+
+[levels.L2]
+models = ["minimax/minimax-m3"]
+price_in = 0.60
+price_out = 2.40
+framework = "opencode"
+
+[levels.L3]
+models = ["moonshotai/kimi-k2.7-code"]
+price_in = 0.95
+price_out = 4.00
+framework = "opencode"
+
+[levels.L4]
+models = ["claude"]
+price_in = 0.0
+price_out = 0.0
+framework = "claude"
