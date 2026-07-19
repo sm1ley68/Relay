@@ -22,11 +22,16 @@ class RunResult:
 
 
 def build_command(template: str, model: str, prompt: str, steps: int) -> list[str]:
-    filled = (template
-              .replace("{model}", model)
-              .replace("{prompt}", prompt)
-              .replace("{steps}", str(steps)))
-    return shlex.split(filled)
+    if model.startswith("-") or prompt.startswith("-"):
+        raise ValueError(
+            "Значения model/prompt не могут начинаться с '-' "
+            "(защита от подмены флагов каркаса)."
+        )
+    subst = {"{model}": model, "{prompt}": prompt, "{steps}": str(steps)}
+    argv = []
+    for tok in shlex.split(template):
+        argv.append(subst.get(tok, tok))
+    return argv
 
 
 def _default_runner(argv: list[str]) -> tuple[int, str, str]:
