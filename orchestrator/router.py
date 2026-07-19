@@ -54,9 +54,15 @@ def estimate_file_count(task: str, repo_root: Path) -> int:
         for line in out.stdout.splitlines():
             if line.strip():
                 hit_files.add(line.strip())
-        for path in repo_root.rglob(f"*{tok}*"):
-            if path.is_file():
-                hit_files.add(str(path))
+        for path in repo_root.rglob(f"*{tok}*.py"):
+            if not path.is_file():
+                continue
+            rel_parts = path.relative_to(repo_root).parts
+            if any(part.startswith(".") or part in
+                   {"node_modules", "__pycache__", ".venv", "venv"}
+                   for part in rel_parts):
+                continue
+            hit_files.add(str(path))
     return len(hit_files)
 
 

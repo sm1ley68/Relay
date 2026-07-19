@@ -58,3 +58,13 @@ def test_estimate_file_count(tmp_path: Path):
     (tmp_path / "other.py").write_text("y = 2\n")
     n = estimate_file_count("правь billing", tmp_path)
     assert n >= 1
+
+
+def test_estimate_file_count_scoped_to_py_and_excludes_vcs(tmp_path: Path):
+    (tmp_path / "billing.py").write_text("x = 1\n")
+    (tmp_path / "billing.txt").write_text("not python\n")
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "billing.py").write_text("x = 1\n")
+    n = estimate_file_count("touch billing", tmp_path)
+    assert n == 1
