@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import budget, escalate, journal, router, runner
-from .config import Config, LADDER, load_config
+from .config import Config, load_config
 
 PREFIXES = {f"/l{i}": f"L{i}" for i in range(5)}
 
@@ -65,8 +64,17 @@ def checkpoint_commit(root: Path, *, _runner=None) -> str:
         if _runner is not None:
             return _runner(argv)
         return subprocess.run(argv, cwd=str(root), capture_output=True, text=True)
-    run(["git", "add", "-A"])
-    run(["git", "commit", "-m", "orchestrator: checkpoint", "--allow-empty"])
+    add_proc = run(["git", "add", "-A"])
+    if add_proc.returncode != 0:
+        raise RuntimeError(
+            "Не удалось создать чекпоинт-коммит (проверьте git user.name/email)."
+        )
+    commit_proc = run(["git", "commit", "-m", "orchestrator: checkpoint",
+                       "--allow-empty"])
+    if commit_proc.returncode != 0:
+        raise RuntimeError(
+            "Не удалось создать чекпоинт-коммит (проверьте git user.name/email)."
+        )
     proc = run(["git", "rev-parse", "HEAD"])
     return proc.stdout.strip()
 
