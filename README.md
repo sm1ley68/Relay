@@ -1,6 +1,6 @@
-# Orchestrator — AI-model router
+# Relay — AI-model router
 
-Single CLI that routes a natural-language task to the cheapest capable agentic
+Single CLI (`relay`) that routes a natural-language task to the cheapest capable agentic
 framework: `opencode` + OpenRouter for levels L0–L3 (free/cheap), `claude` (Pro)
 for L4. Conserves the Claude Pro limit by sending routine work to cheap models
 and escalating only on failure.
@@ -18,10 +18,22 @@ variable — so the environment always wins.
 
 ## Use
 
-    orchestrator "rename the variable foo to bar"        # auto-routed
-    orchestrator /l4 "redesign the billing module"       # forced level
-    orchestrator --dry-run "add a test for parse_args"    # show, don't run
-    orchestrator journal                                  # view decision log
+Interactive session (like `claude` / `gemini`) — just run `relay` with no arguments:
+
+    relay
+    relay> /l4 redesign the billing module
+    relay> --dry-run add a test for parse_args
+    relay> journal
+    relay> exit                       # or Ctrl-D
+
+One-shot (task as arguments):
+
+    relay "rename the variable foo to bar"        # auto-routed
+    relay /l4 "redesign the billing module"       # forced level
+    relay --dry-run "add a test for parse_args"    # show, don't run
+    relay journal                                  # view decision log
+
+(`orchestrator` is a still-supported alias for `relay`.)
 
 Levels: `/l0` trivial · `/l1` simple edits · `/l2` workhorse · `/l3` long
 sessions · `/l4` architecture / hard bugs.

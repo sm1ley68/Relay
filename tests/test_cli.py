@@ -8,10 +8,70 @@ import pytest
 
 from orchestrator.config import load_config
 from orchestrator.cli import (
-    parse_args, orchestrate, main, ParsedArgs,
+    parse_args, orchestrate, main, ParsedArgs, interactive,
     checkpoint_commit, rollback, ensure_git_repo,
 )
 from orchestrator.runner import RunResult
+
+
+def _line_feeder(lines):
+    """input_fn stub: yields each line, then raises EOFError (Ctrl-D)."""
+    it = iter(lines)
+
+    def _input(prompt=""):
+        try:
+            return next(it)
+        except StopIteration:
+            raise EOFError
+    return _input
+
+
+def test_interactive_dispatches_each_line_then_exits_on_eof(tmp_path):
+    cfg = load_config()
+    seen = []
+    rc = interactive(
+        cfg, tmp_path,
+        input_fn=_line_feeder(["/l4 fix auth", "  ", "добавь докстринг"]),
+        dispatch=lambda args, config, root: seen.append(
+            (args.explicit_level, args.task)),
+    )
+    assert rc == 0
+    # blank line skipped; both real tasks dispatched with parsed prefix/task
+    assert seen == [("L4", "fix auth"), (None, "добавь докстринг")]
+
+
+def test_interactive_exit_command_stops(tmp_path):
+    cfg = load_config()
+    seen = []
+    rc = interactive(
+        cfg, tmp_path,
+        input_fn=_line_feeder(["exit", "this should never run"]),
+        dispatch=lambda args, config, root: seen.append(args.task),
+    )
+    assert rc == 0
+    assert seen == []
+
+
+def test_interactive_survives_a_failing_task(tmp_path):
+    cfg = load_config()
+    calls = []
+
+    def boom(args, config, root):
+        calls.append(args.task)
+        if args.task == "bad":
+            raise RuntimeError("kaboom")
+
+    rc = interactive(cfg, tmp_path,
+                     input_fn=_line_feeder(["bad", "good"]), dispatch=boom)
+    assert rc == 0
+    assert calls == ["bad", "good"]  # REPL stayed alive after the error
+
+
+def test_main_bare_opens_repl(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    # bare `relay`: EOF immediately -> REPL returns 0 without dispatching
+    monkeypatch.setattr("builtins.input", _line_feeder([]))
+    assert main([]) == 0
 
 CFG = load_config()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -160,13 +161,11 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         level = nxt
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    args = parse_args(argv)
-    load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
-    config = load_config()
-    repo_root = Path.cwd()
+def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
+    """Handle one parsed invocation: subcommands, guards, orchestration.
 
+    Shared by the one-shot CLI and the interactive REPL.
+    """
     if args.test_cmd is not None:
         import dataclasses
         config = dataclasses.replace(config, test_cmd=args.test_cmd)
@@ -188,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     if not args.task:
-        print("Пустая задача. Пример: orchestrator /l2 почини авторизацию",
+        print("Пустая задача. Пример: relay /l2 почини авторизацию",
               file=sys.stderr)
         return 3
 
@@ -200,3 +199,51 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 5
+
+
+def interactive(config: Config, repo_root: Path, *, input_fn=None,
+                dispatch=None) -> int:
+    """Interactive REPL: read a task per line and route it, until EOF/exit."""
+    input_fn = input_fn or input  # resolved at call time so tests can patch it
+    dispatch = dispatch or _dispatch
+    print("Relay — оркестратор ИИ-моделей.")
+    print("Введите задачу. Префикс уровня: /l0../l4. Флаги: --dry-run, "
+          "--no-commit-guard.")
+    print("Команды: journal — журнал решений, exit — выход (или Ctrl-D).")
+    while True:
+        try:
+            line = input_fn("relay> ")
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print("^C")
+            continue
+        line = line.strip()
+        if not line:
+            continue
+        if line in ("exit", "quit", ":q"):
+            return 0
+        try:
+            parsed = parse_args(shlex.split(line))
+        except ValueError as exc:
+            print(f"Не удалось разобрать строку: {exc}", file=sys.stderr)
+            continue
+        try:
+            dispatch(parsed, config, repo_root)
+        except Exception as exc:  # keep the session alive on any per-task error
+            print(f"Ошибка: {exc}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    args = parse_args(argv)
+    load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
+    config = load_config()
+    repo_root = Path.cwd()
+
+    # Bare `relay` (no arguments at all) opens the interactive REPL.
+    if not argv:
+        return interactive(config, repo_root)
+
+    return _dispatch(args, config, repo_root)
