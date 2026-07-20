@@ -23,8 +23,27 @@ def _color(text: str, rgb=ACCENT, *, bold=False) -> str:
     return f"{prefix}{text}\x1b[0m"
 
 
+_MASCOT = [
+    r"   /\     /\  ",
+    r"  {  `---'  } ",
+    r"  {  O   O  } ",
+    r"  ~~>  V  <~~ ",
+    r"   \  \|/  /  ",
+    r"    `-----'   ",
+]
+
+_RELAY_ART = [
+    "██████╗ ███████╗██╗      █████╗ ██╗   ██╗",
+    "██╔══██╗██╔════╝██║     ██╔══██╗╚██╗ ██╔╝",
+    "██████╔╝█████╗  ██║     ███████║ ╚████╔╝ ",
+    "██╔══██╗██╔══╝  ██║     ██╔══██║  ╚██╔╝  ",
+    "██║  ██║███████╗███████╗██║  ██║   ██║   ",
+    "╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝   ",
+]
+
+
 def _banner(repo_root: Path, config: Config) -> str:
-    cw = 60  # inner content width
+    cw = 84  # inner content width
     user = (Path.home().name or "there").capitalize()
     cwd = str(repo_root)
     home = str(Path.home())
@@ -34,38 +53,57 @@ def _banner(repo_root: Path, config: Config) -> str:
     def _short(model: str) -> str:
         return model.split("/")[0].split(":")[0]  # provider / bare name
 
-    def _rung(lvl: str) -> str:
-        return f"{lvl} {_short(config.levels[lvl].models[0])}"
+    ladder = " · ".join(f"{lvl} {_short(config.levels[lvl].models[0])}"
+                        for lvl in LADDER)
 
-    body = [
+    tips = [
+        _color("Подсказки", DIM),
+        _color("─────────────────────────────", DIM),
+        "• просто задача → авто-выбор уровня",
+        "• /l0 .. /l4 — форсировать уровень",
+        "• --dry-run — показать, не запуская",
+        "• journal · exit",
+    ]
+
+    # left column (fixed width): mascot, blank, then the big RELAY letters.
+    left_w = max(max(len(m) for m in _MASCOT), max(len(a) for a in _RELAY_ART))
+    left_col = ([m.ljust(left_w) for m in _MASCOT]
+                + [" " * left_w]
+                + [a.ljust(left_w) for a in _RELAY_ART])
+    # right column: tips aligned next to the RELAY letters.
+    right_col = [""] * (len(_MASCOT) + 1) + tips
+    rows: list[str] = [""]
+    for i, left in enumerate(left_col):
+        tip = right_col[i] if i < len(right_col) else ""
+        rows.append(f"  {left}   {tip}")
+    rows += [
         "",
-        f"  Привет, {user}!",
-        "",
-        "  Опиши задачу обычным языком — уровень и модель",
-        "  оркестратор выберет сам. Дешёвые модели снизу,",
-        "  Claude (Pro) — только для сложного сверху.",
-        "",
-        "  " + " · ".join(_rung(lvl) for lvl in LADDER[:3]),
-        "  " + " · ".join(_rung(lvl) for lvl in LADDER[3:]),
-        "",
-        "  " + cwd,
+        f"  Привет, {user}! Relay готов — опиши задачу, модель выберется сама.",
+        "  " + _color(ladder, DIM),
+        "  " + _color(cwd, DIM),
         "",
     ]
 
-    title = "Relay v0.1.0"
-    fill = cw + 2 - (len(title) + 3)
-    top = _color("╭─ " + title + " " + "─" * fill + "╮")
+    title = _color("Relay v0.1.0", bold=True)
+    # visible length of title ignores ANSI codes for border math
+    title_vis = "Relay v0.1.0"
+    fill = cw + 2 - (len("╭─  ") + len(title_vis))
+    top = _color("╭─ ") + title + _color(" " + "─" * fill + "╮")
     bottom = _color("╰" + "─" * (cw + 2) + "╯")
     bar = _color("│")
+
+    def _visible_len(s: str) -> int:
+        import re as _re
+        return len(_re.sub(r"\x1b\[[0-9;]*m", "", s))
+
     lines = [top]
-    for row in body:
-        row = row[:cw]
-        lines.append(f"{bar} {row:<{cw}} {bar}")
+    for row in rows:
+        pad = cw - _visible_len(row)
+        if pad < 0:  # too long: hard-trim ignoring color (rare)
+            row, pad = row[:cw], 0
+        lines.append(f"{bar} {row}{' ' * pad} {bar}")
     lines.append(bottom)
-    hint = _color(
-        "  задача — авто-выбор · /l0../l4 — форс · --dry-run — показать · "
-        "journal · exit", DIM)
-    return "\n".join(lines) + "\n" + hint
+    return "\n".join(lines)
 
 
 @dataclass
