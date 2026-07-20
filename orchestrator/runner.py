@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 
 from .config import Config
@@ -35,8 +36,19 @@ def build_command(template: str, model: str, prompt: str, steps: int) -> list[st
 
 
 def _default_runner(argv: list[str]) -> tuple[int, str, str]:
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    return proc.returncode, proc.stdout, proc.stderr
+    # Stream the framework's output live to the console while capturing it, so
+    # the user sees the agent working (like claude/gemini) and we still keep the
+    # text for loop detection. stderr is merged into stdout for a single stream.
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    captured: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        captured.append(line)
+    proc.wait()
+    return proc.returncode, "".join(captured), ""
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,

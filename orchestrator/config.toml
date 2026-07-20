@@ -12,25 +12,25 @@ opencode_cmd = 'opencode run -m {model} "{prompt}"'
 claude_cmd = 'claude -p "{prompt}"'
 
 [levels.L0]
-models = ["cohere/north-mini-code:free"]
+models = ["openrouter/cohere/north-mini-code:free"]
 price_in = 0.0
 price_out = 0.0
 framework = "opencode"
 
 [levels.L1]
-models = ["poolside/laguna-m.1:free"]
+models = ["openrouter/poolside/laguna-m.1:free"]
 price_in = 0.0
 price_out = 0.0
 framework = "opencode"
 
 [levels.L2]
-models = ["minimax/minimax-m3"]
+models = ["openrouter/minimax/minimax-m3"]
 price_in = 0.60
 price_out = 2.40
 framework = "opencode"
 
 [levels.L3]
-models = ["moonshotai/kimi-k2.7-code"]
+models = ["openrouter/moonshotai/kimi-k2.7-code"]
 price_in = 0.95
 price_out = 4.00
 framework = "opencode"

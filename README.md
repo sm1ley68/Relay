@@ -9,12 +9,19 @@ and escalating only on failure.
 
     pip install -e .
 
-Requires: Python 3.13, `opencode` and `claude` on PATH, and an OpenRouter API key.
+Requires: Python 3.13, `opencode` (`npm i -g opencode-ai`) and `claude` on PATH,
+and an OpenRouter API key.
 
-Provide the key either as an environment variable (`export OPENROUTER_API_KEY=...`)
-or in a `.env` file in the working directory (`OPENROUTER_API_KEY="sk-or-..."`).
-`.env` is loaded on startup, is `.gitignore`d, and never overrides a real shell
-variable — so the environment always wins.
+Provide the key in any of these (checked in order; a real shell variable always wins):
+
+1. `export OPENROUTER_API_KEY=...` in your shell
+2. `./.env` in the current project (project-specific override)
+3. `~/.orchestrator/.env` — the global location, so `relay` finds the key from
+   any directory (`OPENROUTER_API_KEY="sk-or-..."`)
+
+`.env` files are loaded on startup and never override a real shell variable. The
+same key is passed through to `opencode`, which reaches the L0–L3 models via its
+`openrouter/` provider.
 
 ## Use
 
