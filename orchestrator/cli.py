@@ -7,9 +7,65 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import budget, escalate, journal, router, runner
-from .config import Config, load_config, load_env_file
+from .config import Config, LADDER, load_config, load_env_file
 
 PREFIXES = {f"/l{i}": f"L{i}" for i in range(5)}
+
+ACCENT = (215, 138, 126)  # Claude-ish salmon
+DIM = (140, 140, 140)
+
+
+def _color(text: str, rgb=ACCENT, *, bold=False) -> str:
+    if not sys.stdout.isatty():
+        return text
+    r, g, b = rgb
+    prefix = ("\x1b[1;" if bold else "\x1b[") + f"38;2;{r};{g};{b}m"
+    return f"{prefix}{text}\x1b[0m"
+
+
+def _banner(repo_root: Path, config: Config) -> str:
+    cw = 60  # inner content width
+    user = (Path.home().name or "there").capitalize()
+    cwd = str(repo_root)
+    home = str(Path.home())
+    if cwd.startswith(home):
+        cwd = "~" + cwd[len(home):]
+
+    def _short(model: str) -> str:
+        return model.split("/")[0].split(":")[0]  # provider / bare name
+
+    def _rung(lvl: str) -> str:
+        return f"{lvl} {_short(config.levels[lvl].models[0])}"
+
+    body = [
+        "",
+        f"  Привет, {user}!",
+        "",
+        "  Опиши задачу обычным языком — уровень и модель",
+        "  оркестратор выберет сам. Дешёвые модели снизу,",
+        "  Claude (Pro) — только для сложного сверху.",
+        "",
+        "  " + " · ".join(_rung(lvl) for lvl in LADDER[:3]),
+        "  " + " · ".join(_rung(lvl) for lvl in LADDER[3:]),
+        "",
+        "  " + cwd,
+        "",
+    ]
+
+    title = "Relay v0.1.0"
+    fill = cw + 2 - (len(title) + 3)
+    top = _color("╭─ " + title + " " + "─" * fill + "╮")
+    bottom = _color("╰" + "─" * (cw + 2) + "╯")
+    bar = _color("│")
+    lines = [top]
+    for row in body:
+        row = row[:cw]
+        lines.append(f"{bar} {row:<{cw}} {bar}")
+    lines.append(bottom)
+    hint = _color(
+        "  задача — авто-выбор · /l0../l4 — форс · --dry-run — показать · "
+        "journal · exit", DIM)
+    return "\n".join(lines) + "\n" + hint
 
 
 @dataclass
@@ -231,13 +287,11 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
     """Interactive REPL: read a task per line and route it, until EOF/exit."""
     input_fn = input_fn or input  # resolved at call time so tests can patch it
     dispatch = dispatch or _dispatch
-    print("Relay — оркестратор ИИ-моделей.")
-    print("Введите задачу. Префикс уровня: /l0../l4. Флаги: --dry-run, "
-          "--no-commit-guard.")
-    print("Команды: journal — журнал решений, exit — выход (или Ctrl-D).")
+    print(_banner(repo_root, config))
+    prompt = _color("❯ ", bold=True)
     while True:
         try:
-            line = input_fn("relay> ")
+            line = input_fn(prompt)
         except EOFError:
             print()
             return 0

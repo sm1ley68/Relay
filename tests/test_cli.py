@@ -9,9 +9,19 @@ import pytest
 from orchestrator.config import load_config
 from orchestrator.cli import (
     parse_args, orchestrate, main, ParsedArgs, interactive, _explain_basis,
-    checkpoint_commit, rollback, ensure_git_repo,
+    _banner, checkpoint_commit, rollback, ensure_git_repo,
 )
 from orchestrator.runner import RunResult
+
+
+def test_banner_renders_box_and_context(tmp_path):
+    out = _banner(tmp_path, load_config())
+    assert "Relay" in out
+    assert "Привет" in out
+    assert "╭" in out and "╯" in out  # bordered box
+    # every boxed row lines up to the same visual width
+    rows = [ln for ln in out.splitlines() if ln.startswith("│")]
+    assert rows and len({len(r) for r in rows}) == 1
 
 
 def test_explain_basis_readable():
