@@ -8,10 +8,19 @@ import pytest
 
 from orchestrator.config import load_config
 from orchestrator.cli import (
-    parse_args, orchestrate, main, ParsedArgs, interactive,
+    parse_args, orchestrate, main, ParsedArgs, interactive, _explain_basis,
     checkpoint_commit, rollback, ensure_git_repo,
 )
 from orchestrator.runner import RunResult
+
+
+def test_explain_basis_readable():
+    assert _explain_basis("explicit") == "выбрано вручную"
+    assert "3/5" in _explain_basis("llm:3")
+    assert "вверх" in _explain_basis("heuristic:up-keyword")
+    assert "вниз" in _explain_basis("heuristic:down-keyword")
+    assert "2" in _explain_basis("heuristic:files:2")
+    assert _explain_basis("something-new") == "something-new"  # fallback
 
 
 def _line_feeder(lines):

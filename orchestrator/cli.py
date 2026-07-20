@@ -88,6 +88,26 @@ def rollback(root: Path, sha: str, *, _runner=None) -> None:
         subprocess.run(argv, cwd=str(root))
 
 
+def _explain_basis(basis: str) -> str:
+    """Human-readable reason for why a level was chosen (for the routing line)."""
+    if basis == "explicit":
+        return "выбрано вручную"
+    if basis.startswith("llm:"):
+        return f"классификатор LLM: сложность {basis.split(':', 1)[1]}/5"
+    if basis.startswith("heuristic:"):
+        reason = basis.split(":", 1)[1]
+        if reason == "failed-low":
+            return "эвристика: провалилось на нижнем уровне"
+        if reason == "up-keyword":
+            return "эвристика: ключевые слова «вверх»"
+        if reason == "down-keyword":
+            return "эвристика: ключевые слова «вниз»"
+        if reason.startswith("up-files:") or reason.startswith("files:"):
+            return f"эвристика: затрагивает файлов — {reason.split(':', 1)[1]}"
+        return f"эвристика: {reason}"
+    return basis
+
+
 def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                 deps=None) -> int:
     d = deps or {}
@@ -118,6 +138,9 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         decision = classify(args.task, config, explicit_level=level,
                             repo_root=repo_root,
                             already_failed=bool(attempts))
+
+        model = decision.models[0] if decision.models else "?"
+        print(f"→ {decision.level} · {model}  ({_explain_basis(decision.basis)})")
 
         if decision.level == "L4" and not args.dry_run and not pro.can_run():
             print("Окно Claude Pro на исходе — поставьте задачу в очередь "
