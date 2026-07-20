@@ -35,3 +35,16 @@ agent runs — roll back with `git reset --hard <checkpoint>`.
 
 Edit `orchestrator/config.toml`: model ladder (fallback lists), framework command
 templates, step limit, cost ceiling, Pro-window thresholds.
+
+## Not yet enforced
+
+- **Per-task step limit.** `--max-steps` / `max_steps` is accepted and stored,
+  but the default `opencode_cmd` / `claude_cmd` command templates in
+  `config.toml` have no `{steps}` placeholder, so the limit is never actually
+  passed to the underlying framework process.
+- **Cost ceiling.** `cost_ceiling_usd` and per-task cost are not enforced or
+  recorded; every journal entry currently logs `cost_usd` as `0.0`.
+
+The escalation triggers that do work today are a nonzero exit code from the
+framework and (optionally) a failing `--test-cmd`. Wiring up step-limit and
+cost enforcement is a follow-up.

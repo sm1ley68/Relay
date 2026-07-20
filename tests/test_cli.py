@@ -212,3 +212,58 @@ def test_main_non_git_repo_guard_returns_3(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     code = main(["do", "thing"])
     assert code == 3
+
+
+def test_main_checkpoint_failure_returns_5_not_traceback(
+        tmp_path: Path, monkeypatch, capsys):
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True,
+                   text=True)
+    monkeypatch.chdir(tmp_path)
+
+    def boom(root):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("orchestrator.cli.checkpoint_commit", boom)
+
+    code = main(["do", "thing"])
+
+    assert code == 5
+    captured = capsys.readouterr()
+    assert "boom" in captured.err
+
+
+def test_orchestrate_dry_run_l4_does_not_touch_budget_or_journal(
+        tmp_path: Path):
+    from orchestrator.router import RouteDecision
+
+    budget_path = tmp_path / "budget.json"
+    cfg = dataclasses.replace(CFG, budget_path=str(budget_path))
+
+    journal_entries = []
+    checkpoint_calls = []
+    run_calls = []
+
+    def run(dec, prompt, cfg, steps, dry_run):
+        run_calls.append(dry_run)
+        return RunResult(0, "[dry-run] would run", "", "m", True)
+
+    deps = {
+        "classify": lambda task, cfg, **kw: RouteDecision(
+            "L4", "claude", ["claude-x"], "explicit"),
+        "run": run,
+        "detect_failure": lambda res, cfg, root: None,
+        "checkpoint": lambda root: checkpoint_calls.append(root),
+        "journal_append": lambda entry, path: journal_entries.append(entry),
+    }
+    args = ParsedArgs("run", "redesign x", "L4", None, None, True, False)
+    code = orchestrate(args, cfg, tmp_path, deps=deps)
+
+    assert code == 0
+    assert run_calls == [True]
+    assert checkpoint_calls == []
+    assert journal_entries == []
+
+    from orchestrator.budget import ProWindow
+    pro = ProWindow(budget_path, cfg.pro_window_hours, cfg.pro_window_max_runs)
+    assert pro.runs_in_window() == 0
+    assert not budget_path.exists()

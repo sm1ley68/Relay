@@ -36,3 +36,11 @@ def test_pro_window_persists_across_instances(tmp_path: Path):
     p = tmp_path / "budget.json"
     ProWindow(p, 5.0, 5).record_run(1000.0)
     assert ProWindow(p, 5.0, 5).runs_in_window(1001.0) == 1
+
+
+def test_pro_window_degrades_on_non_iterable_json(tmp_path: Path):
+    p = tmp_path / "budget.json"
+    p.write_text("null")
+    w = ProWindow(p, 5.0, 5)
+    assert w.runs_in_window() == 0
+    w.record_run()

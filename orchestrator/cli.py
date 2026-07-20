@@ -98,8 +98,12 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
     checkpoint = d.get("checkpoint", lambda root: checkpoint_commit(root))
     journal_append = d.get("journal_append", journal.append)
 
-    if not args.no_commit_guard:
-        checkpoint(repo_root)
+    checkpoint_sha = None
+    if not args.no_commit_guard and not args.dry_run:
+        checkpoint_sha = checkpoint(repo_root)
+        if checkpoint_sha:
+            print(f"Чекпоинт: {checkpoint_sha} "
+                  f"(откат: git reset --hard {checkpoint_sha})", file=sys.stderr)
 
     max_steps = args.max_steps or config.max_steps
     prompt = args.task
@@ -114,7 +118,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                             repo_root=repo_root,
                             already_failed=bool(attempts))
 
-        if decision.level == "L4" and not pro.can_run():
+        if decision.level == "L4" and not args.dry_run and not pro.can_run():
             print("Окно Claude Pro на исходе — поставьте задачу в очередь "
                   "или подождите сброса лимита.", file=sys.stderr)
             entry = journal.new_entry(args.task, decision.level, decision.basis,
@@ -123,11 +127,15 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
             journal_append(entry, Path(config.journal_path).expanduser())
             return 2
 
-        if decision.level == "L4":
+        if decision.level == "L4" and not args.dry_run:
             pro.record_run()
 
         result = run(decision, prompt, config, max_steps, args.dry_run)
-        reason = None if args.dry_run else detect(result, config, repo_root)
+
+        if args.dry_run:
+            return 0
+
+        reason = detect(result, config, repo_root)
 
         if reason is None:
             entry = journal.new_entry(args.task, decision.level, decision.basis,
@@ -188,3 +196,6 @@ def main(argv: list[str] | None = None) -> int:
     except runner.FrameworkNotFound as exc:
         print(str(exc), file=sys.stderr)
         return 4
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5

@@ -22,7 +22,7 @@ class ProWindow:
             return []
         try:
             return [float(x) for x in json.loads(self.path.read_text())]
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, TypeError):
             return []
 
     def _save(self, stamps: list[float]) -> None:
