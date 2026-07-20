@@ -92,6 +92,8 @@ def _explain_basis(basis: str) -> str:
     """Human-readable reason for why a level was chosen (for the routing line)."""
     if basis == "explicit":
         return "выбрано вручную"
+    if basis == "llm-unavailable":
+        return "классификатор недоступен, L2 по умолчанию"
     if basis.startswith("llm:"):
         return f"классификатор LLM: сложность {basis.split(':', 1)[1]}/5"
     if basis.startswith("heuristic:"):

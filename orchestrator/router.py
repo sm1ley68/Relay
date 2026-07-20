@@ -105,8 +105,12 @@ def llm_score(task: str, model: str, api_key: str, *, _opener=None) -> int:
     opener = _opener or urllib.request.urlopen
     with opener(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    content = data["choices"][0]["message"]["content"]
-    m = re.search(r"[1-5]", content)
+    # Response shape can vary (missing keys, null content); tolerate all of it.
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        content = ""
+    m = re.search(r"[1-5]", content or "")
     return int(m.group()) if m else 3
 
 
@@ -125,8 +129,14 @@ def classify(task: str, config: Config, *, explicit_level: str | None = None,
     # Level 3: LLM classifier.
     if score_fn is not None:
         score = score_fn(task)
-    else:
-        import os
-        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        return _decision(score_to_level(score), config, f"llm:{score}")
+
+    import os
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    try:
         score = llm_score(task, config.classifier_model, api_key)
+    except Exception:
+        # Network/HTTP/parse failure: degrade to the workhorse level instead
+        # of crashing the run.
+        return _decision(score_to_level(3), config, "llm-unavailable")
     return _decision(score_to_level(score), config, f"llm:{score}")
