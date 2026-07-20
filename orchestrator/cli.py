@@ -329,9 +329,9 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
         return 0
 
     if not ensure_git_repo(repo_root) and not args.no_commit_guard:
-        print("Не git-репозиторий. Запуск агента запрещён предохранителем. "
-              "Выполните `git init` или добавьте --no-commit-guard.",
-              file=sys.stderr)
+        print("Не git-репозиторий — агент не запущен (нужен чекпоинт для отката). "
+              "Перейди в проект (cd ~/твой-проект), сделай `git init`, "
+              "или добавь --no-commit-guard.", file=sys.stderr)
         return 3
 
     if not args.task:
@@ -355,6 +355,13 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
     input_fn = input_fn or input  # resolved at call time so tests can patch it
     dispatch = dispatch or _dispatch
     print(_banner(repo_root, config))
+    if not ensure_git_repo(repo_root):
+        print(_color(
+            "  ⚠ Это не git-репозиторий — агенты здесь не запустятся "
+            "(нужен чекпоинт для отката).", ACCENT))
+        print(_color(
+            "    Перейди в проект: cd ~/твой-проект && relay   "
+            "(или добавляй --no-commit-guard к задаче).", DIM))
     prompt = _color("❯ ", bold=True)
     while True:
         try:
