@@ -50,13 +50,13 @@ def test_interactive_dispatches_each_line_then_exits_on_eof(tmp_path):
     seen = []
     rc = interactive(
         cfg, tmp_path,
-        input_fn=_line_feeder(["/l4 fix auth", "  ", "добавь докстринг"]),
+        input_fn=_line_feeder(["/l3 fix auth", "  ", "добавь докстринг"]),
         dispatch=lambda args, config, root: seen.append(
             (args.explicit_level, args.task)),
     )
     assert rc == 0
     # blank line skipped; both real tasks dispatched with parsed prefix/task
-    assert seen == [("L4", "fix auth"), (None, "добавь докстринг")]
+    assert seen == [("L3", "fix auth"), (None, "добавь докстринг")]
 
 
 def test_interactive_exit_command_stops(tmp_path):
@@ -96,9 +96,9 @@ CFG = load_config()
 
 
 def test_parse_prefix_and_flags():
-    a = parse_args(["/l4", "fix", "the", "auth", "bug", "--max-steps", "10"])
+    a = parse_args(["/l3", "fix", "the", "auth", "bug", "--max-steps", "10"])
     assert a.command == "run"
-    assert a.explicit_level == "L4"
+    assert a.explicit_level == "L3"
     assert a.task == "fix the auth bug"
     assert a.max_steps == 10
 
@@ -236,14 +236,14 @@ def test_orchestrate_top_of_ladder_failure_returns_1(tmp_path: Path):
     cfg = dataclasses.replace(CFG, budget_path=str(tmp_path / "budget.json"))
     deps = {
         "classify": lambda task, cfg, **kw: RouteDecision(
-            "L4", "claude", ["claude-x"], "explicit"),
+            "L3", "claude", ["claude-x"], "explicit"),
         "run": lambda dec, prompt, cfg, steps, dry_run: RunResult(
             1, "", "", "m", False),
         "detect_failure": lambda res, cfg, root: "exit-code:1",
         "checkpoint": lambda root: "abc",
         "journal_append": lambda entry, path: journal_entries.append(entry),
     }
-    args = ParsedArgs("run", "some big task", "L4", None, None, False, True)
+    args = ParsedArgs("run", "some big task", "L3", None, None, False, True)
     code = orchestrate(args, cfg, tmp_path, deps=deps)
 
     assert code == 1
@@ -268,13 +268,13 @@ def test_orchestrate_pro_exhausted_returns_2(tmp_path: Path):
 
     deps = {
         "classify": lambda task, cfg, **kw: RouteDecision(
-            "L4", "claude", ["claude-x"], "explicit"),
+            "L3", "claude", ["claude-x"], "explicit"),
         "run": run,
         "detect_failure": lambda res, cfg, root: None,
         "checkpoint": lambda root: "abc",
         "journal_append": lambda entry, path: journal_entries.append(entry),
     }
-    args = ParsedArgs("run", "some task", "L4", None, None, False, True)
+    args = ParsedArgs("run", "some task", "L3", None, None, False, True)
     code = orchestrate(args, cfg, tmp_path, deps=deps)
 
     assert code == 2
@@ -328,13 +328,13 @@ def test_orchestrate_dry_run_l4_does_not_touch_budget_or_journal(
 
     deps = {
         "classify": lambda task, cfg, **kw: RouteDecision(
-            "L4", "claude", ["claude-x"], "explicit"),
+            "L3", "claude", ["claude-x"], "explicit"),
         "run": run,
         "detect_failure": lambda res, cfg, root: None,
         "checkpoint": lambda root: checkpoint_calls.append(root),
         "journal_append": lambda entry, path: journal_entries.append(entry),
     }
-    args = ParsedArgs("run", "redesign x", "L4", None, None, True, False)
+    args = ParsedArgs("run", "redesign x", "L3", None, None, True, False)
     code = orchestrate(args, cfg, tmp_path, deps=deps)
 
     assert code == 0

@@ -1,9 +1,12 @@
 # Relay — AI-model router
 
 Single CLI (`relay`) that routes a natural-language task to the cheapest capable agentic
-framework: `opencode` + OpenRouter for levels L0–L3 (free/cheap), `claude` (Pro)
-for L4. Conserves the Claude Pro limit by sending routine work to cheap models
+framework: `opencode` + OpenRouter for levels L0–L2 (free/cheap), `claude` (Pro)
+for L3. Conserves the Claude Pro limit by sending routine work to cheap models
 and escalating only on failure.
+
+Ladder: **L0** North Mini Code (free) · **L1** Laguna M.1 (free) ·
+**L2** DeepSeek V4 Flash ($0.14/$0.28 per 1M) · **L3** Claude Code (Pro subscription).
 
 ## Install
 
@@ -28,7 +31,7 @@ same key is passed through to `opencode`, which reaches the L0–L3 models via i
 Interactive session (like `claude` / `gemini`) — just run `relay` with no arguments:
 
     relay
-    relay> /l4 redesign the billing module
+    relay> /l3 redesign the billing module
     relay> --dry-run add a test for parse_args
     relay> journal
     relay> exit                       # or Ctrl-D
@@ -36,14 +39,14 @@ Interactive session (like `claude` / `gemini`) — just run `relay` with no argu
 One-shot (task as arguments):
 
     relay "rename the variable foo to bar"        # auto-routed
-    relay /l4 "redesign the billing module"       # forced level
+    relay /l3 "redesign the billing module"       # forced level
     relay --dry-run "add a test for parse_args"    # show, don't run
     relay journal                                  # view decision log
 
 (`orchestrator` is a still-supported alias for `relay`.)
 
-Levels: `/l0` trivial · `/l1` simple edits · `/l2` workhorse · `/l3` long
-sessions · `/l4` architecture / hard bugs.
+Levels: `/l0` trivial (North Mini Code) · `/l1` simple edits (Laguna M.1) ·
+`/l2` workhorse (DeepSeek V4 Flash) · `/l3` architecture / hard bugs (Claude Code).
 
 ## How routing works
 

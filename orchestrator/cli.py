@@ -9,7 +9,7 @@ from pathlib import Path
 from . import budget, escalate, journal, router, runner
 from .config import Config, LADDER, load_config, load_env_file
 
-PREFIXES = {f"/l{i}": f"L{i}" for i in range(5)}
+PREFIXES = {f"/l{i}": lvl for i, lvl in enumerate(LADDER)}
 
 ACCENT = (215, 138, 126)  # Claude-ish salmon
 DIM = (140, 140, 140)
@@ -51,7 +51,8 @@ def _banner(repo_root: Path, config: Config) -> str:
         cwd = "~" + cwd[len(home):]
 
     def _short(model: str) -> str:
-        return model.split("/")[0].split(":")[0]  # provider / bare name
+        m = model.removeprefix("openrouter/")
+        return m.split("/")[0].split(":")[0]  # provider / bare name
 
     ladder = " · ".join(f"{lvl} {_short(config.levels[lvl].models[0])}"
                         for lvl in LADDER)
@@ -60,7 +61,7 @@ def _banner(repo_root: Path, config: Config) -> str:
         _color("Подсказки", DIM),
         _color("─────────────────────────────", DIM),
         "• просто задача → авто-выбор уровня",
-        "• /l0 .. /l4 — форсировать уровень",
+        f"• /l0 .. /l{len(LADDER) - 1} — форсировать уровень",
         "• --dry-run — показать, не запуская",
         "• journal · exit",
     ]
@@ -238,7 +239,8 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         model = decision.models[0] if decision.models else "?"
         print(f"→ {decision.level} · {model}  ({_explain_basis(decision.basis)})")
 
-        if decision.level == "L4" and not args.dry_run and not pro.can_run():
+        on_claude = decision.framework == "claude"
+        if on_claude and not args.dry_run and not pro.can_run():
             print("Окно Claude Pro на исходе — поставьте задачу в очередь "
                   "или подождите сброса лимита.", file=sys.stderr)
             entry = journal.new_entry(args.task, decision.level, decision.basis,
@@ -247,7 +249,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
             journal_append(entry, Path(config.journal_path).expanduser())
             return 2
 
-        if decision.level == "L4" and not args.dry_run:
+        if on_claude and not args.dry_run:
             pro.record_run()
 
         result = run(decision, prompt, config, max_steps, args.dry_run)

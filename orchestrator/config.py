@@ -5,7 +5,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-LADDER: list[str] = ["L0", "L1", "L2", "L3", "L4"]
+LADDER: list[str] = ["L0", "L1", "L2", "L3"]
 DEFAULT_CONFIG_PATH: Path = Path(__file__).with_name("config.toml")
 
 

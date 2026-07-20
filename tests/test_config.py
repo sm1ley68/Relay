@@ -6,12 +6,12 @@ from orchestrator.config import load_config, load_env_file, Config, Level, LADDE
 def test_load_default_config():
     cfg = load_config()
     assert isinstance(cfg, Config)
-    assert LADDER == ["L0", "L1", "L2", "L3", "L4"]
+    assert LADDER == ["L0", "L1", "L2", "L3"]
     assert set(cfg.levels) == set(LADDER)
     assert cfg.levels["L0"].framework == "opencode"
-    assert cfg.levels["L4"].framework == "claude"
-    assert cfg.levels["L2"].models == ["openrouter/minimax/minimax-m3"]
-    assert cfg.levels["L2"].price_out == 2.40
+    assert cfg.levels["L3"].framework == "claude"
+    assert cfg.levels["L2"].models == ["openrouter/deepseek/deepseek-v4-flash"]
+    assert cfg.levels["L2"].price_out == 0.28
     assert cfg.test_cmd is None  # empty string normalizes to None
     assert "{model}" in cfg.opencode_cmd
 

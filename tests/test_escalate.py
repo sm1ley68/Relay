@@ -10,8 +10,8 @@ CFG = load_config()
 
 def test_next_level():
     assert next_level("L0") == "L1"
-    assert next_level("L3") == "L4"
-    assert next_level("L4") is None
+    assert next_level("L2") == "L3"
+    assert next_level("L3") is None
 
 
 def test_detect_loop():

@@ -28,7 +28,8 @@ class RouteDecision:
 
 
 def score_to_level(score: int) -> str:
-    idx = max(1, min(5, score)) - 1
+    # LLM returns 1-5; map onto however many levels the ladder has.
+    idx = max(1, min(len(LADDER), score)) - 1
     return LADDER[idx]
 
 
@@ -68,20 +69,21 @@ def estimate_file_count(task: str, repo_root: Path) -> int:
 
 def heuristic_level(task: str, repo_root: Path,
                     already_failed: bool) -> tuple[str | None, str]:
+    top = LADDER[-1]  # the Claude (subscription) level, whatever it's numbered
     if already_failed:
-        return "L4", "failed-low"
+        return top, "failed-low"
 
     low = task.lower()
     if any(k in low for k in UP_KEYWORDS):
-        return "L4", "up-keyword"
+        return top, "up-keyword"
     if any(k in low for k in DOWN_KEYWORDS):
         return "L0", "down-keyword"
 
     files = estimate_file_count(task, repo_root)
     if files >= 4:
-        return "L4", f"up-files:{files}"
+        return top, f"up-files:{files}"
     if files >= 2:
-        return "L3", f"files:{files}"
+        return LADDER[-2], f"files:{files}"
     return None, ""
 
 

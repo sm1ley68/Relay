@@ -24,18 +24,12 @@ price_out = 0.0
 framework = "opencode"
 
 [levels.L2]
-models = ["openrouter/minimax/minimax-m3"]
-price_in = 0.60
-price_out = 2.40
+models = ["openrouter/deepseek/deepseek-v4-flash"]
+price_in = 0.14
+price_out = 0.28
 framework = "opencode"
 
 [levels.L3]
-models = ["openrouter/moonshotai/kimi-k2.7-code"]
-price_in = 0.95
-price_out = 4.00
-framework = "opencode"
-
-[levels.L4]
 models = ["claude"]
 price_in = 0.0
 price_out = 0.0

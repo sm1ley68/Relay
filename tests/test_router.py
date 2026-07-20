@@ -50,15 +50,15 @@ def test_classify_degrades_when_llm_raises(tmp_path, monkeypatch):
 
 def test_score_to_level_clamps():
     assert score_to_level(1) == "L0"
-    assert score_to_level(5) == "L4"
+    assert score_to_level(5) == "L3"  # clamps to the top of a 4-level ladder
     assert score_to_level(0) == "L0"
-    assert score_to_level(9) == "L4"
+    assert score_to_level(9) == "L3"
 
 
 def test_explicit_level_wins(tmp_path: Path):
-    d = classify("anything at all", CFG, explicit_level="L4",
+    d = classify("anything at all", CFG, explicit_level="L3",
                  repo_root=tmp_path, score_fn=lambda t: 1)
-    assert d.level == "L4"
+    assert d.level == "L3"
     assert d.framework == "claude"
     assert d.basis == "explicit"
 
@@ -73,7 +73,7 @@ def test_heuristic_down_keyword(tmp_path: Path):
 def test_heuristic_up_keyword(tmp_path: Path):
     level, reason = heuristic_level("перепиши архитектуру модуля billing",
                                     tmp_path, already_failed=False)
-    assert level == "L4"
+    assert level == "L3"
     assert "up" in reason
 
 
@@ -81,7 +81,7 @@ def test_already_failed_forces_none_to_escalate(tmp_path: Path):
     # a task the heuristics would send down, but it already failed low
     level, reason = heuristic_level("переименуй переменную x", tmp_path,
                                     already_failed=True)
-    assert level == "L4"
+    assert level == "L3"
     assert "failed" in reason
 
 
