@@ -33,6 +33,27 @@ def test_consume_opencode_json_streams_text_and_sums_usage():
     assert round(usage["cost"], 4) == 0.0003
 
 
+def test_consume_claude_json_streams_text_and_reads_usage():
+    import json as _json
+    from orchestrator.runner import _consume_claude_json
+    lines = [
+        _json.dumps({"type": "system", "subtype": "init"}),
+        _json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "pong"}]}}),
+        _json.dumps({"type": "result", "subtype": "success",
+                     "total_cost_usd": 0.078,
+                     "usage": {"input_tokens": 2, "output_tokens": 4,
+                               "cache_creation_input_tokens": 9124,
+                               "cache_read_input_tokens": 7293}}),
+    ]
+    written = []
+    text, usage = _consume_claude_json(lines, written.append)
+    assert "pong" in text
+    assert usage["input"] == 2 and usage["output"] == 4
+    assert usage["context"] == 2 + 9124 + 7293   # prompt + cache
+    assert round(usage["cost"], 3) == 0.078
+
+
 def test_consume_opencode_json_tolerates_non_json_line():
     from orchestrator.runner import _consume_opencode_json
     written = []

@@ -64,6 +64,45 @@ def _consume_opencode_json(lines, write) -> tuple[str, dict]:
     return "".join(captured), usage
 
 
+def _consume_claude_json(lines, write) -> tuple[str, dict]:
+    """Parse Claude Code's ``--output-format stream-json`` event stream.
+
+    Streams assistant text (and compact tool markers) via ``write`` and reads
+    token/cost usage from the final ``result`` event. Returns the captured
+    assistant text and a usage dict.
+    """
+    captured: list[str] = []
+    usage = {"input": 0, "output": 0, "reasoning": 0, "context": 0, "cost": 0.0}
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except ValueError:
+            write(raw if raw.endswith("\n") else raw + "\n")
+            captured.append(line)
+            continue
+        etype = evt.get("type")
+        if etype == "assistant":
+            for c in evt.get("message", {}).get("content", []):
+                if c.get("type") == "text" and c.get("text"):
+                    write(c["text"] + "\n")
+                    captured.append(c["text"])
+                elif c.get("type") == "tool_use" and c.get("name"):
+                    write(f"\n  ⚙ {c['name']}\n")
+        elif etype == "result":
+            u = evt.get("usage", {}) or {}
+            usage["input"] += u.get("input_tokens", 0) or 0
+            usage["output"] += u.get("output_tokens", 0) or 0
+            ctx = ((u.get("input_tokens", 0) or 0)
+                   + (u.get("cache_creation_input_tokens", 0) or 0)
+                   + (u.get("cache_read_input_tokens", 0) or 0))
+            usage["context"] = max(usage["context"], ctx)
+            usage["cost"] += evt.get("total_cost_usd", 0) or 0
+    return "".join(captured), usage
+
+
 def build_command(template: str, model: str, prompt: str, steps: int) -> list[str]:
     if model.startswith("-") or prompt.startswith("-"):
         raise ValueError(
@@ -93,8 +132,8 @@ def _default_runner(argv: list[str]) -> tuple[int, str, str]:
     return proc.returncode, "".join(captured), ""
 
 
-def _run_opencode_json(argv: list[str]) -> tuple[int, str, str, dict]:
-    # Stream opencode's json events: print assistant text live, collect usage.
+def _run_streaming_json(argv: list[str], consume) -> tuple[int, str, str, dict]:
+    # Stream a framework's json events: print assistant text live, collect usage.
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     assert proc.stdout is not None
@@ -103,9 +142,16 @@ def _run_opencode_json(argv: list[str]) -> tuple[int, str, str, dict]:
         sys.stdout.write(s)
         sys.stdout.flush()
 
-    text, usage = _consume_opencode_json(proc.stdout, _write)
+    text, usage = consume(proc.stdout, _write)
     proc.wait()
     return proc.returncode, text, "", usage
+
+
+# json event parser per framework (for token/context/cost surfacing)
+_JSON_CONSUMERS = {
+    "opencode": _consume_opencode_json,
+    "claude": _consume_claude_json,
+}
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
@@ -121,16 +167,16 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
         print("[dry-run]", " ".join(shlex.quote(a) for a in argv))
         return RunResult(0, "", "", model, False)
 
-    # For opencode we parse its json stream to surface token/context usage;
+    # Parse the framework's json stream to surface token/context usage;
     # an injected _runner (tests) always takes the plain path.
-    use_json = _runner is None and decision.framework == "opencode"
+    consume = None if _runner is not None else _JSON_CONSUMERS.get(decision.framework)
 
     last_error: Exception | None = None
     for model in decision.models:
         argv = build_command(template, model, prompt, max_steps)
         try:
-            if use_json:
-                code, out, err, usage = _run_opencode_json(argv)
+            if consume is not None:
+                code, out, err, usage = _run_streaming_json(argv, consume)
             else:
                 code, out, err = runner(argv)
                 usage = None

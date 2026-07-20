@@ -58,8 +58,9 @@ On failure (nonzero exit, step limit, loop, failing tests) the task escalates on
 level up, carrying a journal + `git diff`. A checkpoint commit is made before any
 agent runs — roll back with `git reset --hard <checkpoint>`.
 
-Each run prints the model chosen (with the reason) and, for OpenRouter levels, a
-token/context/cost footer parsed from opencode's json stream, e.g.:
+Each run prints the model chosen (with the reason) and a token/context/cost
+footer parsed from the framework's json stream — both opencode (L0–L2) and
+Claude Code (L3), e.g.:
 
     → L2 · openrouter/deepseek/deepseek-v4-flash  (классификатор LLM: сложность 3/5)
     …answer…
