@@ -1,11 +1,36 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 LADDER: list[str] = ["L0", "L1", "L2", "L3", "L4"]
 DEFAULT_CONFIG_PATH: Path = Path(__file__).with_name("config.toml")
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """Load KEY=VALUE lines from a .env file into os.environ.
+
+    Stdlib-only (no python-dotenv). Missing file is a no-op. Existing
+    environment variables are never overridden, so a real shell export
+    wins over the file. Blank lines and ``#`` comments are ignored; an
+    optional ``export`` prefix and surrounding quotes are stripped.
+    """
+    path = path or (Path.cwd() / ".env")
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 @dataclass

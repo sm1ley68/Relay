@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Orchestrator runtime state (journal, budget window)
+.orchestrator/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# SDD scratch (progress ledger, task briefs, review packages)
+.superpowers/

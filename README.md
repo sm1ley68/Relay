@@ -9,7 +9,12 @@ and escalating only on failure.
 
     pip install -e .
 
-Requires: Python 3.13, `opencode` and `claude` on PATH, `OPENROUTER_API_KEY` set.
+Requires: Python 3.13, `opencode` and `claude` on PATH, and an OpenRouter API key.
+
+Provide the key either as an environment variable (`export OPENROUTER_API_KEY=...`)
+or in a `.env` file in the working directory (`OPENROUTER_API_KEY="sk-or-..."`).
+`.env` is loaded on startup, is `.gitignore`d, and never overrides a real shell
+variable — so the environment always wins.
 
 ## Use
 

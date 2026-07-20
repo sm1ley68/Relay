@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import budget, escalate, journal, router, runner
-from .config import Config, load_config
+from .config import Config, load_config, load_env_file
 
 PREFIXES = {f"/l{i}": f"L{i}" for i in range(5)}
 
@@ -163,6 +163,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(argv)
+    load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
     config = load_config()
     repo_root = Path.cwd()
 
