@@ -63,7 +63,7 @@ def _banner(repo_root: Path, config: Config) -> str:
         "• просто задача → авто-выбор уровня",
         f"• /l0 .. /l{len(LADDER) - 1} — форсировать уровень",
         "• --dry-run — показать, не запуская",
-        "• journal · exit",
+        "• /help · /journal · /config · exit",
     ]
 
     # left column (fixed width): mascot, blank, then the big RELAY letters.
@@ -203,6 +203,20 @@ def _usage_line(usage: dict) -> str:
     return _color("  " + " · ".join(parts), DIM)
 
 
+def _attempt_note(level: str, reason: str, stdout: str, *, tail: int = 20) -> str:
+    """One escalation-journal entry: the failed level, why, and its output tail.
+
+    The output gives the higher model the actual error text, not just the
+    failure category, when the task is escalated.
+    """
+    note = f"{level}: {reason}"
+    lines = [ln for ln in (stdout or "").splitlines() if ln.strip()]
+    if lines:
+        body = "\n".join("    " + ln for ln in lines[-tail:])
+        note += f"\n  вывод (последние строки):\n{body}"
+    return note
+
+
 def _explain_basis(basis: str) -> str:
     """Human-readable reason for why a level was chosen (for the routing line)."""
     if basis == "explicit":
@@ -293,7 +307,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
             journal_append(entry, Path(config.journal_path).expanduser())
             return 0
 
-        attempts.append(f"{decision.level}: {reason}")
+        attempts.append(_attempt_note(decision.level, reason, result.stdout))
         nxt = escalate.next_level(decision.level)
         if nxt is None:
             entry = journal.new_entry(args.task, decision.level, decision.basis,
@@ -349,6 +363,68 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
         return 5
 
 
+def _print_help(config: Config) -> None:
+    print(_color("Команды Relay:", ACCENT, bold=True))
+    rows = [
+        ("<задача>", "описать задачу — уровень выберется сам"),
+        ("/l0 .. /l3 <задача>", "форсировать уровень"),
+        ("--dry-run <задача>", "показать команду, не запуская"),
+        ("/help", "эта справка"),
+        ("/journal", "журнал решений (уровень, исход, стоимость)"),
+        ("/config", "текущая лестница моделей и настройки"),
+        ("/clear", "очистить экран и перерисовать баннер"),
+        ("/exit, exit, Ctrl-D", "выход"),
+    ]
+    for cmd, desc in rows:
+        print(f"  {_color(cmd, ACCENT)}")
+        print(f"      {_color(desc, DIM)}")
+    print(_color("  Уровни: L0/L1 бесплатно · L2 дёшево · L3 Claude (подписка)",
+                 DIM))
+
+
+def _print_config(config: Config, repo_root: Path) -> None:
+    print(_color("Лестница моделей:", ACCENT, bold=True))
+    for lvl in LADDER:
+        L = config.levels[lvl]
+        if L.framework == "claude":
+            price = "подписка Pro"
+        elif L.price_in == 0 and L.price_out == 0:
+            price = "бесплатно"
+        else:
+            price = f"${L.price_in}/${L.price_out} за 1M"
+        print(f"  {_color(lvl, ACCENT)} · {L.models[0]} · {L.framework} · {price}")
+    print(_color("Настройки:", ACCENT, bold=True))
+    print(f"  классификатор: {config.classifier_model}")
+    print(f"  лимит шагов: {config.max_steps} · потолок ${config.cost_ceiling_usd}")
+    print(f"  окно Pro: {config.pro_window_max_runs} запусков / "
+          f"{config.pro_window_hours}ч")
+    print(f"  журнал: {config.journal_path}")
+    print(f"  папка: {repo_root}")
+
+
+def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
+    """Handle a /command. Returns 'exit' to quit, '' if handled, None if not one."""
+    cmd = line.split()[0].lower()
+    if cmd in ("/exit", "/quit"):
+        return "exit"
+    if cmd == "/help":
+        _print_help(config)
+        return ""
+    if cmd == "/journal":
+        for e in journal.read_all(Path(config.journal_path).expanduser()):
+            print(f"{e.timestamp}  {e.level:3}  {e.outcome:12}  "
+                  f"${e.cost_usd:.4f}  {e.task}")
+        return ""
+    if cmd == "/config":
+        _print_config(config, repo_root)
+        return ""
+    if cmd == "/clear":
+        print("\x1b[2J\x1b[H", end="")
+        print(_banner(repo_root, config))
+        return ""
+    return None
+
+
 def interactive(config: Config, repo_root: Path, *, input_fn=None,
                 dispatch=None) -> int:
     """Interactive REPL: read a task per line and route it, until EOF/exit."""
@@ -377,6 +453,17 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
             continue
         if line in ("exit", "quit", ":q"):
             return 0
+        # Slash-commands (but not the /l0../l3 level prefixes).
+        first = line.split()[0].lower()
+        if first.startswith("/") and first not in PREFIXES:
+            result = _repl_command(line, config, repo_root)
+            if result == "exit":
+                return 0
+            if result == "":
+                continue
+            print(_color(f"Неизвестная команда {first}. /help — список.", DIM),
+                  file=sys.stderr)
+            continue
         try:
             parsed = parse_args(shlex.split(line))
         except ValueError as exc:

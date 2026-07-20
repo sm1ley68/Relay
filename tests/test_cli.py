@@ -24,6 +24,41 @@ def test_banner_renders_box_and_context(tmp_path):
     assert rows and len({len(r) for r in rows}) == 1
 
 
+def test_attempt_note_includes_output_tail():
+    from orchestrator.cli import _attempt_note
+    note = _attempt_note("L1", "tests-failed",
+                         "line1\nFAILED test_x\nAssertionError: 1 != 2\n")
+    assert note.startswith("L1: tests-failed")
+    assert "AssertionError: 1 != 2" in note  # actual error carried to next level
+
+
+def test_attempt_note_no_output():
+    from orchestrator.cli import _attempt_note
+    assert _attempt_note("L0", "exit-code:1", "") == "L0: exit-code:1"
+
+
+def test_repl_command_exit_help_config_unknown(tmp_path, capsys):
+    from orchestrator.cli import _repl_command
+    cfg = load_config()
+    assert _repl_command("/exit", cfg, tmp_path) == "exit"
+    assert _repl_command("/quit", cfg, tmp_path) == "exit"
+    assert _repl_command("/help", cfg, tmp_path) == ""
+    assert _repl_command("/config", cfg, tmp_path) == ""
+    assert _repl_command("/nope", cfg, tmp_path) is None
+    out = capsys.readouterr().out
+    assert "Команды Relay" in out and "Лестница моделей" in out
+
+
+def test_interactive_handles_slash_command_without_dispatch(tmp_path):
+    cfg = load_config()
+    dispatched = []
+    rc = interactive(cfg, tmp_path,
+                     input_fn=_line_feeder(["/help", "/exit"]),
+                     dispatch=lambda *a: dispatched.append(a))
+    assert rc == 0
+    assert dispatched == []  # /help and /exit are commands, never dispatched
+
+
 def test_explain_basis_readable():
     assert _explain_basis("explicit") == "выбрано вручную"
     assert "3/5" in _explain_basis("llm:3")
