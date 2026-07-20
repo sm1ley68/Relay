@@ -298,6 +298,16 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                 print()  # put the footer on its own line
             print(_usage_line(result.usage))
 
+        if result.cost_limit_hit:
+            print(f"⛔ Превышен потолок стоимости ${config.cost_ceiling_usd} — "
+                  "задача прервана (эскалации нет, чтобы не тратить больше).",
+                  file=sys.stderr)
+            entry = journal.new_entry(args.task, decision.level, decision.basis,
+                                      decision.framework, result.model,
+                                      "cost-ceiling", 0, run_cost, escalations)
+            journal_append(entry, Path(config.journal_path).expanduser())
+            return 6
+
         reason = detect(result, config, repo_root)
 
         if reason is None:

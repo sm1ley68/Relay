@@ -31,6 +31,7 @@ def test_consume_opencode_json_streams_text_and_sums_usage():
     assert usage["reasoning"] == 25
     assert usage["context"] == 9487             # peak total
     assert round(usage["cost"], 4) == 0.0003
+    assert usage["steps"] == 2                  # one per step_finish
 
 
 def test_consume_claude_json_streams_text_and_reads_usage():
@@ -52,6 +53,7 @@ def test_consume_claude_json_streams_text_and_reads_usage():
     assert usage["input"] == 2 and usage["output"] == 4
     assert usage["context"] == 2 + 9124 + 7293   # prompt + cache
     assert round(usage["cost"], 3) == 0.078
+    assert usage["steps"] == 1                    # one assistant turn
 
 
 def test_consume_opencode_json_tolerates_non_json_line():

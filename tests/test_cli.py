@@ -285,6 +285,37 @@ def test_orchestrate_top_of_ladder_failure_returns_1(tmp_path: Path):
     assert journal_entries[-1].outcome.startswith("failed:")
 
 
+def test_orchestrate_cost_ceiling_returns_6_without_escalating(tmp_path: Path):
+    from orchestrator.router import RouteDecision
+
+    journal_entries = []
+    escalated = {"n": 0}
+
+    def run(dec, prompt, cfg, steps, dry_run):
+        escalated["n"] += 1
+        return RunResult(0, "done", "", "m",
+                         usage={"cost": 0.99, "input": 1, "output": 1,
+                                "context": 1, "reasoning": 0},
+                         cost_limit_hit=True)
+
+    cfg = dataclasses.replace(CFG, budget_path=str(tmp_path / "b.json"))
+    deps = {
+        "classify": lambda task, cfg, **kw: RouteDecision(
+            "L2", "opencode", ["m"], "explicit"),
+        "run": run,
+        "detect_failure": lambda res, cfg, root: None,
+        "checkpoint": lambda root: "abc",
+        "journal_append": lambda entry, path: journal_entries.append(entry),
+    }
+    args = ParsedArgs("run", "runaway task", "L2", None, None, False, True)
+    code = orchestrate(args, cfg, tmp_path, deps=deps)
+
+    assert code == 6
+    assert escalated["n"] == 1                       # did NOT escalate
+    assert journal_entries[-1].outcome == "cost-ceiling"
+    assert journal_entries[-1].cost_usd == 0.99      # real cost recorded
+
+
 def test_orchestrate_pro_exhausted_returns_2(tmp_path: Path):
     from orchestrator.router import RouteDecision
 

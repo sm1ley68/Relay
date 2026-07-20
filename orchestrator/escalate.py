@@ -30,10 +30,12 @@ def _run_test_cmd(cmd: str, cwd: Path) -> int:
 
 def detect_failure(result: RunResult, config: Config, repo_root: Path, *,
                    _test_runner=None) -> str | None:
-    if result.exit_code != 0:
-        return f"exit-code:{result.exit_code}"
+    # step-limit is checked first: when we terminate the process for exceeding
+    # the limit, its exit code is a signal, which would otherwise mask it.
     if result.step_limit_hit:
         return "step-limit"
+    if result.exit_code != 0:
+        return f"exit-code:{result.exit_code}"
     if detect_loop(result.stdout):
         return "loop"
     if config.test_cmd:

@@ -25,6 +25,13 @@ def test_detect_failure_on_exit_code():
     assert detect_failure(res, CFG, Path(".")) == "exit-code:1"
 
 
+def test_detect_failure_step_limit_beats_signal_exit_code():
+    # process was terminated for exceeding the step limit -> reported as
+    # step-limit, not as the signal exit code
+    res = RunResult(-15, "", "", "m", step_limit_hit=True)
+    assert detect_failure(res, CFG, Path(".")) == "step-limit"
+
+
 def test_detect_failure_on_step_limit():
     res = RunResult(0, "", "", "m", True)
     assert detect_failure(res, CFG, Path(".")) == "step-limit"

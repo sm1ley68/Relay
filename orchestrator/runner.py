@@ -22,85 +22,97 @@ class RunResult:
     model: str
     step_limit_hit: bool = False
     usage: dict | None = None
+    cost_limit_hit: bool = False
 
 
-def _consume_opencode_json(lines, write) -> tuple[str, dict]:
-    """Parse opencode's ``--format json`` event stream.
+class _StreamParser:
+    """Stateful parser for a framework's json event stream.
 
-    Streams assistant text (and compact tool markers) via ``write`` and
-    accumulates token/cost usage from ``step_finish`` events. Returns the
-    captured assistant text and a usage dict.
+    Feeds text to a writer live, accumulates token/cost usage, and counts
+    agent steps — so a caller can stop the run when a step or cost limit is hit.
     """
-    captured: list[str] = []
-    usage = {"input": 0, "output": 0, "reasoning": 0, "context": 0, "cost": 0.0}
-    for raw in lines:
+
+    def __init__(self, framework: str):
+        self.framework = framework
+        self.captured: list[str] = []
+        self.usage = {"input": 0, "output": 0, "reasoning": 0,
+                      "context": 0, "cost": 0.0, "steps": 0}
+
+    @property
+    def text(self) -> str:
+        return "".join(self.captured)
+
+    def feed(self, raw: str, write) -> None:
         line = raw.strip()
         if not line:
-            continue
+            return
         try:
             evt = json.loads(line)
         except ValueError:
             write(raw if raw.endswith("\n") else raw + "\n")
-            captured.append(line)
-            continue
+            self.captured.append(line)
+            return
+        if self.framework == "opencode":
+            self._feed_opencode(evt, write)
+        else:
+            self._feed_claude(evt, write)
+
+    def _feed_opencode(self, evt: dict, write) -> None:
         etype = evt.get("type")
         part = evt.get("part", {})
         if etype == "text":
             text = part.get("text", "")
             if text:
                 write(text)
-                captured.append(text)
+                self.captured.append(text)
         elif etype == "tool_use":
             tool = part.get("tool", "")
             if tool:
                 write(f"\n  ⚙ {tool}\n")
         elif etype == "step_finish":
             tk = part.get("tokens", {}) or {}
-            usage["input"] += tk.get("input", 0) or 0
-            usage["output"] += tk.get("output", 0) or 0
-            usage["reasoning"] += tk.get("reasoning", 0) or 0
-            usage["context"] = max(usage["context"], tk.get("total", 0) or 0)
-            usage["cost"] += part.get("cost", 0) or 0
-    return "".join(captured), usage
+            u = self.usage
+            u["input"] += tk.get("input", 0) or 0
+            u["output"] += tk.get("output", 0) or 0
+            u["reasoning"] += tk.get("reasoning", 0) or 0
+            u["context"] = max(u["context"], tk.get("total", 0) or 0)
+            u["cost"] += part.get("cost", 0) or 0
+            u["steps"] += 1
 
-
-def _consume_claude_json(lines, write) -> tuple[str, dict]:
-    """Parse Claude Code's ``--output-format stream-json`` event stream.
-
-    Streams assistant text (and compact tool markers) via ``write`` and reads
-    token/cost usage from the final ``result`` event. Returns the captured
-    assistant text and a usage dict.
-    """
-    captured: list[str] = []
-    usage = {"input": 0, "output": 0, "reasoning": 0, "context": 0, "cost": 0.0}
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            evt = json.loads(line)
-        except ValueError:
-            write(raw if raw.endswith("\n") else raw + "\n")
-            captured.append(line)
-            continue
+    def _feed_claude(self, evt: dict, write) -> None:
         etype = evt.get("type")
         if etype == "assistant":
+            self.usage["steps"] += 1
             for c in evt.get("message", {}).get("content", []):
                 if c.get("type") == "text" and c.get("text"):
                     write(c["text"] + "\n")
-                    captured.append(c["text"])
+                    self.captured.append(c["text"])
                 elif c.get("type") == "tool_use" and c.get("name"):
                     write(f"\n  ⚙ {c['name']}\n")
         elif etype == "result":
             u = evt.get("usage", {}) or {}
-            usage["input"] += u.get("input_tokens", 0) or 0
-            usage["output"] += u.get("output_tokens", 0) or 0
+            us = self.usage
+            us["input"] += u.get("input_tokens", 0) or 0
+            us["output"] += u.get("output_tokens", 0) or 0
             ctx = ((u.get("input_tokens", 0) or 0)
                    + (u.get("cache_creation_input_tokens", 0) or 0)
                    + (u.get("cache_read_input_tokens", 0) or 0))
-            usage["context"] = max(usage["context"], ctx)
-            usage["cost"] += evt.get("total_cost_usd", 0) or 0
-    return "".join(captured), usage
+            us["context"] = max(us["context"], ctx)
+            us["cost"] += evt.get("total_cost_usd", 0) or 0
+
+
+def _consume_opencode_json(lines, write) -> tuple[str, dict]:
+    parser = _StreamParser("opencode")
+    for line in lines:
+        parser.feed(line, write)
+    return parser.text, parser.usage
+
+
+def _consume_claude_json(lines, write) -> tuple[str, dict]:
+    parser = _StreamParser("claude")
+    for line in lines:
+        parser.feed(line, write)
+    return parser.text, parser.usage
 
 
 def build_command(template: str, model: str, prompt: str, steps: int) -> list[str]:
@@ -132,26 +144,36 @@ def _default_runner(argv: list[str]) -> tuple[int, str, str]:
     return proc.returncode, "".join(captured), ""
 
 
-def _run_streaming_json(argv: list[str], consume) -> tuple[int, str, str, dict]:
-    # Stream a framework's json events: print assistant text live, collect usage.
+def _run_streaming_json(argv: list[str], framework: str, *, max_steps: int,
+                        cost_ceiling: float):
+    # Stream a framework's json events: print text live, collect usage, and
+    # terminate the process if the step limit or cost ceiling is exceeded.
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     assert proc.stdout is not None
+    parser = _StreamParser(framework)
+    step_limit_hit = cost_limit_hit = False
 
     def _write(s: str) -> None:
         sys.stdout.write(s)
         sys.stdout.flush()
 
-    text, usage = consume(proc.stdout, _write)
+    for line in proc.stdout:
+        parser.feed(line, _write)
+        if max_steps and parser.usage["steps"] > max_steps:
+            step_limit_hit = True
+            proc.terminate()
+            break
+        if cost_ceiling and parser.usage["cost"] > cost_ceiling:
+            cost_limit_hit = True
+            proc.terminate()
+            break
     proc.wait()
-    return proc.returncode, text, "", usage
+    return (proc.returncode, parser.text, "", parser.usage,
+            step_limit_hit, cost_limit_hit)
 
 
-# json event parser per framework (for token/context/cost surfacing)
-_JSON_CONSUMERS = {
-    "opencode": _consume_opencode_json,
-    "claude": _consume_claude_json,
-}
+_JSON_FRAMEWORKS = {"opencode", "claude"}
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
@@ -167,23 +189,27 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
         print("[dry-run]", " ".join(shlex.quote(a) for a in argv))
         return RunResult(0, "", "", model, False)
 
-    # Parse the framework's json stream to surface token/context usage;
+    # Parse the framework's json stream to surface usage and enforce limits;
     # an injected _runner (tests) always takes the plain path.
-    consume = None if _runner is not None else _JSON_CONSUMERS.get(decision.framework)
+    use_json = _runner is None and decision.framework in _JSON_FRAMEWORKS
 
     last_error: Exception | None = None
     for model in decision.models:
         argv = build_command(template, model, prompt, max_steps)
         try:
-            if consume is not None:
-                code, out, err, usage = _run_streaming_json(argv, consume)
+            if use_json:
+                code, out, err, usage, step_hit, cost_hit = _run_streaming_json(
+                    argv, decision.framework, max_steps=max_steps,
+                    cost_ceiling=config.cost_ceiling_usd)
             else:
                 code, out, err = runner(argv)
-                usage = None
+                usage, step_hit, cost_hit = None, False, False
         except FileNotFoundError as exc:
             last_error = exc
             continue
-        return RunResult(code, out or "", err or "", model, False, usage)
+        return RunResult(code, out or "", err or "", model,
+                         step_limit_hit=step_hit, usage=usage,
+                         cost_limit_hit=cost_hit)
 
     raise FrameworkNotFound(
         f"Не найден бинарь каркаса '{decision.framework}'. "
