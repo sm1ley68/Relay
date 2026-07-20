@@ -13,6 +13,21 @@ PREFIXES = {f"/l{i}": lvl for i, lvl in enumerate(LADDER)}
 
 ACCENT = (215, 138, 126)  # Claude-ish salmon
 DIM = (140, 140, 140)
+GREEN = (126, 200, 140)   # free tier
+YELLOW = (220, 180, 90)   # cheap paid tier
+MAGENTA = (198, 130, 220)  # Claude Pro tier
+
+
+def _level_rgb(config: Config, level: str) -> tuple[int, int, int]:
+    """Colour a level by cost tier: green free, yellow cheap, magenta Pro."""
+    lvl = config.levels.get(level)
+    if lvl is None:
+        return DIM
+    if lvl.framework == "claude":
+        return MAGENTA
+    if lvl.price_in == 0 and lvl.price_out == 0:
+        return GREEN
+    return YELLOW
 
 
 def _color(text: str, rgb=ACCENT, *, bold=False) -> str:
@@ -250,12 +265,8 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
     checkpoint = d.get("checkpoint", lambda root: checkpoint_commit(root))
     journal_append = d.get("journal_append", journal.append)
 
-    checkpoint_sha = None
     if not args.no_commit_guard and not args.dry_run:
-        checkpoint_sha = checkpoint(repo_root)
-        if checkpoint_sha:
-            print(f"Чекпоинт: {checkpoint_sha} "
-                  f"(откат: git reset --hard {checkpoint_sha})", file=sys.stderr)
+        checkpoint(repo_root)  # silent safety commit; roll back with /undo
 
     max_steps = args.max_steps or config.max_steps
     prompt = args.task
@@ -271,7 +282,9 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                             already_failed=bool(attempts))
 
         model = decision.models[0] if decision.models else "?"
-        print(f"→ {decision.level} · {model}  ({_explain_basis(decision.basis)})")
+        lvl = _color(decision.level, _level_rgb(config, decision.level), bold=True)
+        print(f"{_color('→', DIM)} {lvl} · {_color(model, DIM)}  "
+              f"{_color('(' + _explain_basis(decision.basis) + ')', DIM)}")
 
         on_claude = decision.framework == "claude"
         if on_claude and not args.dry_run and not pro.can_run():
@@ -382,6 +395,7 @@ def _print_help(config: Config) -> None:
         ("/steps N", "лимит шагов агента на сессию (/steps off — сброс)"),
         ("/test <cmd>", "прогонять тест после задачи (/test off — выкл)"),
         ("/guard [on|off]", "чекпоинт-коммит перед агентом (по умолч. вкл)"),
+        ("/undo", "откатить изменения последней задачи"),
         ("/journal", "журнал решений (уровень, исход, стоимость)"),
         ("/config", "лестница моделей и настройки"),
         ("/clear", "очистить экран"),
@@ -416,11 +430,28 @@ def _print_config(config: Config, repo_root: Path) -> None:
     print(f"  папка: {repo_root}")
 
 
+def _last_checkpoint(repo_root: Path) -> str | None:
+    proc = subprocess.run(
+        ["git", "log", "--grep=orchestrator: checkpoint", "--format=%H", "-n", "1"],
+        cwd=str(repo_root), capture_output=True, text=True)
+    sha = proc.stdout.strip()
+    return sha or None
+
+
 def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
     """Handle a /command. Returns 'exit' to quit, '' if handled, None if not one."""
     cmd = line.split()[0].lower()
     if cmd in ("/exit", "/quit"):
         return "exit"
+    if cmd == "/undo":
+        sha = _last_checkpoint(repo_root)
+        if not sha:
+            print(_color("Нет чекпоинта для отката.", DIM))
+            return ""
+        rollback(repo_root, sha)
+        print(_color(f"↩ откатил к чекпоинту {sha[:8]} "
+                     "(изменения последней задачи отменены).", GREEN))
+        return ""
     if cmd == "/help":
         _print_help(config)
         return ""

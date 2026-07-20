@@ -37,6 +37,31 @@ def test_attempt_note_no_output():
     assert _attempt_note("L0", "exit-code:1", "") == "L0: exit-code:1"
 
 
+def test_level_rgb_by_tier():
+    from orchestrator.cli import _level_rgb, GREEN, YELLOW, MAGENTA
+    cfg = load_config()
+    assert _level_rgb(cfg, "L0") == GREEN     # free
+    assert _level_rgb(cfg, "L2") == YELLOW    # cheap paid (deepseek)
+    assert _level_rgb(cfg, "L3") == MAGENTA   # claude / Pro
+
+
+def test_undo_resets_to_last_checkpoint(tmp_path):
+    # real git repo with an orchestrator checkpoint commit + later change
+    def git(*a):
+        subprocess.run(["git", *a], cwd=str(tmp_path), capture_output=True)
+    git("init")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "f.txt").write_text("original\n")
+    git("add", "-A")
+    git("commit", "-m", "orchestrator: checkpoint")
+    (tmp_path / "f.txt").write_text("changed by agent\n")  # uncommitted "task" edit
+
+    from orchestrator.cli import _repl_command
+    assert _repl_command("/undo", load_config(), tmp_path) == ""
+    assert (tmp_path / "f.txt").read_text() == "original\n"  # rolled back
+
+
 def test_repl_command_exit_help_config_unknown(tmp_path, capsys):
     from orchestrator.cli import _repl_command
     cfg = load_config()
