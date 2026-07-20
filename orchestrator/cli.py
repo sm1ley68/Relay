@@ -183,6 +183,26 @@ def rollback(root: Path, sha: str, *, _runner=None) -> None:
         subprocess.run(argv, cwd=str(root))
 
 
+def _fmt_k(n: int) -> str:
+    """Compact token count: 9487 -> '9.5K', 512 -> '512'."""
+    return f"{n / 1000:.1f}K".replace(".0K", "K") if n >= 1000 else str(n)
+
+
+def _usage_line(usage: dict) -> str:
+    """One-line token/context/cost footer for a completed run."""
+    inp = usage.get("input", 0)
+    out = usage.get("output", 0)
+    reasoning = usage.get("reasoning", 0)
+    ctx = usage.get("context", 0)
+    cost = usage.get("cost", 0.0)
+    parts = [f"⛁ токены: {_fmt_k(inp)} in · {_fmt_k(out)} out"]
+    if reasoning:
+        parts.append(f"{_fmt_k(reasoning)} reasoning")
+    parts.append(f"контекст {_fmt_k(ctx)}")
+    parts.append(f"${cost:.4f}")
+    return _color("  " + " · ".join(parts), DIM)
+
+
 def _explain_basis(basis: str) -> str:
     """Human-readable reason for why a level was chosen (for the routing line)."""
     if basis == "explicit":
@@ -257,12 +277,19 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         if args.dry_run:
             return 0
 
+        run_cost = 0.0
+        if result.usage:
+            run_cost = float(result.usage.get("cost", 0.0))
+            if result.stdout and not result.stdout.endswith("\n"):
+                print()  # put the footer on its own line
+            print(_usage_line(result.usage))
+
         reason = detect(result, config, repo_root)
 
         if reason is None:
             entry = journal.new_entry(args.task, decision.level, decision.basis,
                                       decision.framework, result.model,
-                                      "success", 0, 0.0, escalations)
+                                      "success", 0, run_cost, escalations)
             journal_append(entry, Path(config.journal_path).expanduser())
             return 0
 

@@ -8,6 +8,39 @@ from orchestrator.runner import (
 CFG = load_config()
 
 
+def test_consume_opencode_json_streams_text_and_sums_usage():
+    import json as _json
+    from orchestrator.runner import _consume_opencode_json
+    lines = [
+        _json.dumps({"type": "text", "part": {"text": "po"}}),
+        _json.dumps({"type": "tool_use", "part": {"tool": "bash"}}),
+        _json.dumps({"type": "text", "part": {"text": "ng"}}),
+        _json.dumps({"type": "step_finish", "part": {
+            "tokens": {"input": 243, "output": 3, "reasoning": 25, "total": 9487},
+            "cost": 0.0002}}),
+        _json.dumps({"type": "step_finish", "part": {
+            "tokens": {"input": 10, "output": 5, "reasoning": 0, "total": 500},
+            "cost": 0.0001}}),
+        "",  # blank line ignored
+    ]
+    written = []
+    text, usage = _consume_opencode_json(lines, written.append)
+    assert text == "pong"                       # only assistant text captured
+    assert "".join(written).startswith("po")    # streamed live
+    assert usage["input"] == 253 and usage["output"] == 8
+    assert usage["reasoning"] == 25
+    assert usage["context"] == 9487             # peak total
+    assert round(usage["cost"], 4) == 0.0003
+
+
+def test_consume_opencode_json_tolerates_non_json_line():
+    from orchestrator.runner import _consume_opencode_json
+    written = []
+    text, usage = _consume_opencode_json(["not json at all"], written.append)
+    assert "not json" in "".join(written)
+    assert usage["input"] == 0
+
+
 def test_build_command_substitutes():
     argv = build_command('opencode run -m {model} "{prompt}"',
                          "minimax/minimax-m3", "fix bug", 40)

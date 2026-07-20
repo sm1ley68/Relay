@@ -8,7 +8,7 @@ budget_path = "~/.orchestrator/budget.json"
 test_cmd = ""
 
 # {model}, {prompt}, {steps} are substituted by runner.py
-opencode_cmd = 'opencode run -m {model} "{prompt}"'
+opencode_cmd = 'opencode run --format json -m {model} "{prompt}"'
 claude_cmd = 'claude -p "{prompt}"'
 
 [levels.L0]

@@ -58,6 +58,15 @@ On failure (nonzero exit, step limit, loop, failing tests) the task escalates on
 level up, carrying a journal + `git diff`. A checkpoint commit is made before any
 agent runs — roll back with `git reset --hard <checkpoint>`.
 
+Each run prints the model chosen (with the reason) and, for OpenRouter levels, a
+token/context/cost footer parsed from opencode's json stream, e.g.:
+
+    → L2 · openrouter/deepseek/deepseek-v4-flash  (классификатор LLM: сложность 3/5)
+    …answer…
+      ⛁ токены: 8.4K in · 4 out · 16 reasoning · контекст 9.5K · $0.0009
+
+The real cost is recorded in the decision journal.
+
 ## Config
 
 Edit `orchestrator/config.toml`: model ladder (fallback lists), framework command
