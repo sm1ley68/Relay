@@ -63,6 +63,13 @@ def test_explicit_level_wins(tmp_path: Path):
     assert d.basis == "explicit"
 
 
+def test_heuristic_greeting_goes_free(tmp_path: Path):
+    for greeting in ("привет", "Привет!", "спасибо", "hi", "тест"):
+        level, reason = heuristic_level(greeting, tmp_path, already_failed=False)
+        assert level == "L0", greeting          # free, not the paid classifier
+        assert reason == "trivial"
+
+
 def test_heuristic_down_keyword(tmp_path: Path):
     level, reason = heuristic_level("добавь докстринг к функции foo",
                                     tmp_path, already_failed=False)

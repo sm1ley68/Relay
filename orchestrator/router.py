@@ -17,6 +17,12 @@ DOWN_KEYWORDS: list[str] = [
     "переименуй", "переименован", "добавь тест", "докстринг", "отформатируй",
     "формат", "комментар", "rename", "add test", "docstring", "format", "typo",
 ]
+# Greetings / small talk / trivial pings — not coding tasks; keep them free (L0).
+GREETINGS: set[str] = {
+    "привет", "приветик", "прив", "здравствуй", "здравствуйте", "хай", "ку",
+    "как дела", "спасибо", "спс", "пока", "тест", "проверка", "ping", "pong",
+    "hi", "hello", "hey", "yo", "thanks", "thank you", "test", "ok", "ок",
+}
 
 
 @dataclass
@@ -74,6 +80,8 @@ def heuristic_level(task: str, repo_root: Path,
         return top, "failed-low"
 
     low = task.lower()
+    if low.strip().strip("!.?…) ") in GREETINGS:
+        return "L0", "trivial"
     if any(k in low for k in UP_KEYWORDS):
         return top, "up-keyword"
     if any(k in low for k in DOWN_KEYWORDS):
@@ -89,8 +97,14 @@ def heuristic_level(task: str, repo_root: Path,
 
 def llm_score(task: str, model: str, api_key: str, *, _opener=None) -> int:
     prompt = (
-        "Оцени сложность задачи для агента от 1 до 5. "
-        "1 = тривиально, 5 = смена архитектуры. Ответь ОДНОЙ цифрой.\n\n"
+        "Оцени сложность задачи для программиста от 1 до 5. Шкала:\n"
+        "1 = тривиально или это вообще не задача (приветствие, вопрос, "
+        "опечатка, докстринг, форматирование).\n"
+        "2 = простая правка в одном файле по образцу.\n"
+        "3 = обычная задача, пара файлов.\n"
+        "4 = много связанных файлов или неочевидный баг.\n"
+        "5 = смена архитектуры, переписывание модуля.\n"
+        "Если сомневаешься — ставь ниже. Ответь РОВНО ОДНОЙ цифрой.\n\n"
         f"Задача: {task}"
     )
     body = json.dumps({
