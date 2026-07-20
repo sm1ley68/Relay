@@ -376,18 +376,22 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
 def _print_help(config: Config) -> None:
     print(_color("Команды Relay:", ACCENT, bold=True))
     rows = [
-        ("<задача>", "описать задачу — уровень выберется сам"),
+        ("<задача>", "описать задачу — уровень выберется сам (флаги не нужны)"),
         ("/l0 .. /l3 <задача>", "форсировать уровень"),
-        ("--dry-run <задача>", "показать команду, не запуская"),
-        ("/help", "эта справка"),
+        ("/dry [on|off]", "режим «показать, не запуская» на всю сессию"),
+        ("/steps N", "лимит шагов агента на сессию (/steps off — сброс)"),
+        ("/test <cmd>", "прогонять тест после задачи (/test off — выкл)"),
+        ("/guard [on|off]", "чекпоинт-коммит перед агентом (по умолч. вкл)"),
         ("/journal", "журнал решений (уровень, исход, стоимость)"),
-        ("/config", "текущая лестница моделей и настройки"),
-        ("/clear", "очистить экран и перерисовать баннер"),
+        ("/config", "лестница моделей и настройки"),
+        ("/clear", "очистить экран"),
+        ("/help", "эта справка"),
         ("/exit, exit, Ctrl-D", "выход"),
     ]
     for cmd, desc in rows:
         print(f"  {_color(cmd, ACCENT)}")
         print(f"      {_color(desc, DIM)}")
+    print(_color("  Режимы сессии видны в приглашении: [dry steps=10 test] ❯", DIM))
     print(_color("  Уровни: L0/L1 бесплатно · L2 дёшево · L3 Claude (подписка)",
                  DIM))
 
@@ -435,11 +439,81 @@ def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
     return None
 
 
+def _new_session() -> dict:
+    return {"dry_run": False, "no_commit_guard": False,
+            "max_steps": None, "test_cmd": None}
+
+
+def _session_command(line: str, session: dict) -> str | None:
+    """Set a session-wide default. Returns a status message, or None if not one."""
+    parts = line.split(maxsplit=1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    def onoff(cur: bool) -> bool:
+        return True if arg.lower() == "on" else False if arg.lower() == "off" else not cur
+
+    if cmd == "/dry":
+        session["dry_run"] = onoff(session["dry_run"])
+        return _color(f"режим dry-run: {'вкл' if session['dry_run'] else 'выкл'}", DIM)
+    if cmd == "/guard":
+        # guard on = checkpoint commit before agents; off = skip it
+        session["no_commit_guard"] = (
+            False if arg.lower() == "on" else True if arg.lower() == "off"
+            else not session["no_commit_guard"])
+        on = not session["no_commit_guard"]
+        return _color(f"чекпоинт-коммит: {'вкл' if on else 'выкл'}", DIM)
+    if cmd == "/steps":
+        if arg.lower() in ("", "off", "0"):
+            session["max_steps"] = None
+            return _color("лимит шагов: по умолчанию", DIM)
+        try:
+            session["max_steps"] = int(arg)
+        except ValueError:
+            return _color("Использование: /steps N   (или /steps off)", DIM)
+        return _color(f"лимит шагов: {session['max_steps']}", DIM)
+    if cmd == "/test":
+        if arg.lower() in ("", "off"):
+            session["test_cmd"] = None
+            return _color("test-cmd: выкл", DIM)
+        session["test_cmd"] = arg
+        return _color(f"test-cmd: {arg}", DIM)
+    return None
+
+
+def _apply_session(args: ParsedArgs, session: dict) -> ParsedArgs:
+    """Fold session defaults into a parsed line (inline flags still win)."""
+    if session["dry_run"]:
+        args.dry_run = True
+    if session["no_commit_guard"]:
+        args.no_commit_guard = True
+    if args.max_steps is None:
+        args.max_steps = session["max_steps"]
+    if args.test_cmd is None:
+        args.test_cmd = session["test_cmd"]
+    return args
+
+
+def _prompt(session: dict) -> str:
+    tags = []
+    if session["dry_run"]:
+        tags.append("dry")
+    if session["no_commit_guard"]:
+        tags.append("no-guard")
+    if session["max_steps"] is not None:
+        tags.append(f"steps={session['max_steps']}")
+    if session["test_cmd"]:
+        tags.append("test")
+    status = _color(f"[{' '.join(tags)}] ", DIM) if tags else ""
+    return status + _color("❯ ", bold=True)
+
+
 def interactive(config: Config, repo_root: Path, *, input_fn=None,
                 dispatch=None) -> int:
     """Interactive REPL: read a task per line and route it, until EOF/exit."""
     input_fn = input_fn or input  # resolved at call time so tests can patch it
     dispatch = dispatch or _dispatch
+    session = _new_session()
     print(_banner(repo_root, config))
     if not ensure_git_repo(repo_root):
         print(_color(
@@ -448,10 +522,9 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
         print(_color(
             "    Перейди в проект: cd ~/твой-проект && relay   "
             "(или добавляй --no-commit-guard к задаче).", DIM))
-    prompt = _color("❯ ", bold=True)
     while True:
         try:
-            line = input_fn(prompt)
+            line = input_fn(_prompt(session))
         except EOFError:
             print()
             return 0
@@ -466,6 +539,10 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
         # Slash-commands (but not the /l0../l3 level prefixes).
         first = line.split()[0].lower()
         if first.startswith("/") and first not in PREFIXES:
+            msg = _session_command(line, session)
+            if msg is not None:
+                print(msg)
+                continue
             result = _repl_command(line, config, repo_root)
             if result == "exit":
                 return 0
@@ -475,7 +552,7 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
                   file=sys.stderr)
             continue
         try:
-            parsed = parse_args(shlex.split(line))
+            parsed = _apply_session(parse_args(shlex.split(line)), session)
         except ValueError as exc:
             print(f"Не удалось разобрать строку: {exc}", file=sys.stderr)
             continue

@@ -49,6 +49,45 @@ def test_repl_command_exit_help_config_unknown(tmp_path, capsys):
     assert "Команды Relay" in out and "Лестница моделей" in out
 
 
+def test_session_commands_set_defaults():
+    from orchestrator.cli import _new_session, _session_command, _apply_session
+    s = _new_session()
+    assert _session_command("/dry", s) is not None and s["dry_run"] is True
+    assert _session_command("/dry off", s) is not None and s["dry_run"] is False
+    _session_command("/steps 7", s)
+    assert s["max_steps"] == 7
+    _session_command("/steps off", s)
+    assert s["max_steps"] is None
+    _session_command("/test pytest -q", s)
+    assert s["test_cmd"] == "pytest -q"
+    _session_command("/guard off", s)
+    assert s["no_commit_guard"] is True
+    assert _session_command("/nope", s) is None  # not a session command
+
+
+def test_apply_session_folds_defaults_but_inline_wins():
+    from orchestrator.cli import _apply_session
+    session = {"dry_run": True, "no_commit_guard": False,
+               "max_steps": 5, "test_cmd": "pytest"}
+    # inline line has no max_steps -> takes session's 5; dry_run from session
+    a = parse_args(["do", "thing"])
+    _apply_session(a, session)
+    assert a.dry_run is True and a.max_steps == 5 and a.test_cmd == "pytest"
+    # inline --max-steps wins over session
+    b = _apply_session(parse_args(["--max-steps", "20", "x"]), session)
+    assert b.max_steps == 20
+
+
+def test_interactive_session_dry_applies_to_next_task(tmp_path):
+    cfg = load_config()
+    seen = []
+    rc = interactive(cfg, tmp_path,
+                     input_fn=_line_feeder(["/dry", "do a thing", "/exit"]),
+                     dispatch=lambda args, c, r: seen.append(args.dry_run))
+    assert rc == 0
+    assert seen == [True]  # /dry set the mode; the task ran in dry-run
+
+
 def test_interactive_handles_slash_command_without_dispatch(tmp_path):
     cfg = load_config()
     dispatched = []

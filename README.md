@@ -28,13 +28,21 @@ same key is passed through to `opencode`, which reaches the L0–L3 models via i
 
 ## Use
 
-Interactive session (like `claude` / `gemini`) — just run `relay` with no arguments:
+Interactive session (like `claude` / `gemini`) — just run `relay` with no arguments.
+For normal use you don't need any flags — type the task, the level is auto-chosen:
 
     relay
-    relay> /l3 redesign the billing module
-    relay> --dry-run add a test for parse_args
-    relay> journal
-    relay> exit                       # or Ctrl-D
+    ❯ добавь докстринги в utils.py
+    ❯ /l3 redesign the billing module      # force a level
+
+**Session modes** — set once, applied to every task, shown in the prompt (no need
+to retype flags):
+
+    ❯ /dry                 # dry-run mode on   → prompt becomes  [dry] ❯
+    ❯ /steps 10            # cap agent steps   → [dry steps=10] ❯
+    ❯ /test pytest -q      # run tests after each task, escalate on failure
+    ❯ /guard off           # skip the checkpoint commit
+    ❯ /journal             # decision log · /config settings · /help all commands
 
 One-shot (task as arguments):
 
