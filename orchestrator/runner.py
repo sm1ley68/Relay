@@ -25,6 +25,15 @@ class RunResult:
     cost_limit_hit: bool = False
 
 
+def _safe(s: str) -> str:
+    """Strip lone surrogates so text can be written to stdout / passed as argv.
+
+    Framework json can carry escaped surrogates (e.g. from truncated multibyte
+    tool output); writing them to a strict-utf8 stream raises UnicodeEncodeError.
+    """
+    return s.encode("utf-8", "replace").decode("utf-8")
+
+
 class _StreamParser:
     """Stateful parser for a framework's json event stream.
 
@@ -49,8 +58,9 @@ class _StreamParser:
         try:
             evt = json.loads(line)
         except ValueError:
-            write(raw if raw.endswith("\n") else raw + "\n")
-            self.captured.append(line)
+            safe = _safe(raw if raw.endswith("\n") else raw + "\n")
+            write(safe)
+            self.captured.append(_safe(line))
             return
         if self.framework == "opencode":
             self._feed_opencode(evt, write)
@@ -61,7 +71,7 @@ class _StreamParser:
         etype = evt.get("type")
         part = evt.get("part", {})
         if etype == "text":
-            text = part.get("text", "")
+            text = _safe(part.get("text", ""))
             if text:
                 write(text)
                 self.captured.append(text)
@@ -85,8 +95,9 @@ class _StreamParser:
             self.usage["steps"] += 1
             for c in evt.get("message", {}).get("content", []):
                 if c.get("type") == "text" and c.get("text"):
-                    write(c["text"] + "\n")
-                    self.captured.append(c["text"])
+                    text = _safe(c["text"])
+                    write(text + "\n")
+                    self.captured.append(text)
                 elif c.get("type") == "tool_use" and c.get("name"):
                     write(f"\n  ⚙ {c['name']}\n")
         elif etype == "result":

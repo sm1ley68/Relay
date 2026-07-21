@@ -56,6 +56,21 @@ def test_consume_claude_json_streams_text_and_reads_usage():
     assert usage["steps"] == 1                    # one assistant turn
 
 
+def test_consume_json_sanitizes_surrogates():
+    import json as _json
+    from orchestrator.runner import _consume_opencode_json
+    # json can carry an escaped lone surrogate that would crash a strict stream
+    payload = _json.dumps({"type": "text", "part": {"text": "po"}})
+    surrogate = '{"type":"text","part":{"text":"\\udcd0ng"}}'
+    written = []
+    text, usage = _consume_opencode_json([payload, surrogate], written.append)
+    joined = "".join(written)
+    # no lone surrogate survives into captured text or the live stream
+    assert all(not (0xD800 <= ord(c) <= 0xDFFF) for c in text)
+    assert all(not (0xD800 <= ord(c) <= 0xDFFF) for c in joined)
+    joined.encode("utf-8")  # must be encodable (would raise before the fix)
+
+
 def test_consume_opencode_json_tolerates_non_json_line():
     from orchestrator.runner import _consume_opencode_json
     written = []

@@ -594,6 +594,12 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Never crash on a stray surrogate/undecodable char in framework output.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(argv)
     load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
