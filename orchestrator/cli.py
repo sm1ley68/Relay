@@ -495,11 +495,12 @@ def _print_stats(config: Config) -> None:
 
 
 def _doctor(config: Config) -> int:
-    """Check the environment and report what's ready / missing."""
+    """Check the environment for the ACTIVE config and report what's missing."""
     import shutil
     ok = _color("✓", GREEN)
     bad = _color("✗", (220, 100, 100))
     print(_color("Relay doctor — проверка окружения:", ACCENT, bold=True))
+    print(_color(f"  конфиг: {config.active_path or '(встроенный)'}", DIM))
     problems = 0
 
     py_ok = sys.version_info >= (3, 13)
@@ -507,18 +508,31 @@ def _doctor(config: Config) -> int:
           f"{sys.version_info.minor}" + ("" if py_ok else "  (нужен 3.13+)"))
     problems += not py_ok
 
-    for tool, hint in (("opencode", "npm i -g opencode-ai  (для L0–L2)"),
-                       ("claude", "поставь Claude Code и залогинься  (для L3)"),
-                       ("git", "нужен git")):
-        found = shutil.which(tool)
-        print(f"  {ok if found else bad} {tool}" +
+    print(f"  {ok if shutil.which('git') else bad} git")
+    problems += not shutil.which("git")
+
+    # Only the CLIs actually used by this ladder.
+    used = {config.levels[lv].framework for lv in config.levels}
+    for name in sorted(used):
+        fw = config.frameworks.get(name)
+        binary = shlex.split(fw.cmd)[0] if fw else name
+        found = shutil.which(binary)
+        hint = {"opencode": "npm i -g opencode-ai",
+                "claude": "поставь Claude Code и залогинься",
+                "codex": "поставь Codex CLI и `codex login`"}.get(name, "поставь его")
+        print(f"  {ok if found else bad} {binary}" +
               (f"  {found}" if found else f"  — не найден: {hint}"))
         problems += not found
 
-    key = bool(os.environ.get("OPENROUTER_API_KEY"))
-    print(f"  {ok if key else bad} OPENROUTER_API_KEY" +
-          ("" if key else "  — задай в ~/.orchestrator/.env"))
-    problems += not key
+    # OpenRouter key only if the ladder or classifier actually needs it.
+    needs_or = bool(config.classifier_model) or any(
+        m.startswith("openrouter/") for lv in config.levels.values()
+        for m in lv.models)
+    if needs_or:
+        key = bool(os.environ.get("OPENROUTER_API_KEY"))
+        print(f"  {ok if key else bad} OPENROUTER_API_KEY" +
+              ("" if key else "  — задай в ~/.orchestrator/.env"))
+        problems += not key
 
     if problems:
         print(_color(f"\nНе хватает {problems} — см. подсказки выше.", DIM))
