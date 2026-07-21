@@ -259,7 +259,8 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
     d = deps or {}
     classify = d.get("classify", router.classify)
     run = d.get("run", lambda dec, prompt, cfg, steps, dry_run:
-                runner.run_framework(dec, prompt, cfg, steps, dry_run=dry_run))
+                runner.run_framework(dec, prompt, cfg, steps,
+                                     repo_root=repo_root, dry_run=dry_run))
     detect = d.get("detect_failure", lambda res, cfg, root:
                    escalate.detect_failure(res, cfg, root))
     checkpoint = d.get("checkpoint", lambda root: checkpoint_commit(root))

@@ -79,6 +79,14 @@ def test_consume_opencode_json_tolerates_non_json_line():
     assert usage["input"] == 0
 
 
+def test_framework_env_sets_pwd_to_project():
+    from orchestrator.runner import _framework_env
+    env = _framework_env("/tmp/some/project")
+    assert env["PWD"] == "/tmp/some/project"  # agent operates on the target dir
+    # sane baseline: inherits the rest of the environment
+    assert "PATH" in env
+
+
 def test_build_command_substitutes():
     argv = build_command('opencode run -m {model} "{prompt}"',
                          "minimax/minimax-m3", "fix bug", 40)

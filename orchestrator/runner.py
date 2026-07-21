@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -155,12 +156,22 @@ def _default_runner(argv: list[str]) -> tuple[int, str, str]:
     return proc.returncode, "".join(captured), ""
 
 
+def _framework_env(cwd) -> dict:
+    # Some frameworks read $PWD instead of getcwd(); keep them in sync so the
+    # agent operates on the target project regardless of how relay was invoked.
+    env = dict(os.environ)
+    if cwd is not None:
+        env["PWD"] = str(cwd)
+    return env
+
+
 def _run_streaming_json(argv: list[str], framework: str, *, max_steps: int,
-                        cost_ceiling: float):
+                        cost_ceiling: float, cwd=None):
     # Stream a framework's json events: print text live, collect usage, and
     # terminate the process if the step limit or cost ceiling is exceeded.
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            cwd=cwd, env=_framework_env(cwd))
     assert proc.stdout is not None
     parser = _StreamParser(framework)
     step_limit_hit = cost_limit_hit = False
@@ -188,7 +199,7 @@ _JSON_FRAMEWORKS = {"opencode", "claude"}
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
-                  max_steps: int, *, dry_run: bool = False,
+                  max_steps: int, *, repo_root=None, dry_run: bool = False,
                   _runner=None) -> RunResult:
     template = (config.opencode_cmd if decision.framework == "opencode"
                 else config.claude_cmd)
@@ -203,6 +214,7 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
     # Parse the framework's json stream to surface usage and enforce limits;
     # an injected _runner (tests) always takes the plain path.
     use_json = _runner is None and decision.framework in _JSON_FRAMEWORKS
+    cwd = str(repo_root) if repo_root is not None else None
 
     last_error: Exception | None = None
     for model in decision.models:
@@ -211,7 +223,7 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
             if use_json:
                 code, out, err, usage, step_hit, cost_hit = _run_streaming_json(
                     argv, decision.framework, max_steps=max_steps,
-                    cost_ceiling=config.cost_ceiling_usd)
+                    cost_ceiling=config.cost_ceiling_usd, cwd=cwd)
             else:
                 code, out, err = runner(argv)
                 usage, step_hit, cost_hit = None, False, False
