@@ -87,6 +87,40 @@ def test_framework_env_sets_pwd_to_project():
     assert "PATH" in env
 
 
+def test_classify_model_error():
+    from orchestrator.runner import _classify_model_error
+    assert _classify_model_error("HTTP 429: rate limit exceeded") == "rate-limit"
+    assert _classify_model_error("No endpoints found for that model") == "model-unavailable"
+    assert _classify_model_error("done, all good") is None
+
+
+def test_run_framework_rotates_to_next_model_on_error():
+    from orchestrator.runner import run_framework
+    from orchestrator.router import RouteDecision
+    dec = RouteDecision("L0", "opencode", ["m1free", "m2free"], "explicit")
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        joined = " ".join(argv)
+        if "m1free" in joined:
+            return (0, "Error: no endpoints found for model m1free", "")
+        return (0, "done", "")
+
+    res = run_framework(dec, "task", CFG, 40, _runner=runner)
+    assert res.model == "m2free"   # rotated past the unavailable first model
+    assert len(calls) == 2
+
+
+def test_run_framework_no_rotation_on_last_model():
+    from orchestrator.runner import run_framework
+    from orchestrator.router import RouteDecision
+    dec = RouteDecision("L0", "opencode", ["only"], "explicit")
+    res = run_framework(dec, "task", CFG, 40,
+                        _runner=lambda a: (0, "rate limit hit", ""))
+    assert res.model == "only"     # nothing to rotate to -> returned (escalates)
+
+
 def test_build_command_substitutes():
     argv = build_command('opencode run -m {model} "{prompt}"',
                          "minimax/minimax-m3", "fix bug", 40)

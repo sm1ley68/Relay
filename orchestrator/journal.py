@@ -45,5 +45,8 @@ def read_all(path: Path) -> list[JournalEntry]:
             line = line.strip()
             if not line:
                 continue
-            rows.append(JournalEntry(**json.loads(line)))
+            try:
+                rows.append(JournalEntry(**json.loads(line)))
+            except (json.JSONDecodeError, TypeError):
+                continue  # skip a corrupt/partial line (e.g. crash mid-append)
     return rows

@@ -27,14 +27,24 @@ cmd = 'codex exec "{prompt}"'
 format = "text"
 auto = ["--dangerously-bypass-approvals-and-sandbox"]
 
+# Free tiers keep several fallbacks: OpenRouter rotates/rate-limits free models,
+# so relay rotates to the next one on a 429 / model-unavailable error.
 [levels.L0]
-models = ["openrouter/cohere/north-mini-code:free"]
+models = [
+    "openrouter/cohere/north-mini-code:free",
+    "openrouter/poolside/laguna-xs-2.1:free",
+    "openrouter/openai/gpt-oss-20b:free",
+]
 price_in = 0.0
 price_out = 0.0
 framework = "opencode"
 
 [levels.L1]
-models = ["openrouter/poolside/laguna-m.1:free"]
+models = [
+    "openrouter/poolside/laguna-m.1:free",
+    "openrouter/google/gemma-4-31b-it:free",
+    "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
+]
 price_in = 0.0
 price_out = 0.0
 framework = "opencode"

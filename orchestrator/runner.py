@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 
 from .config import Config
@@ -248,6 +249,24 @@ def _run_streaming_plain(argv: list[str], *, timeout: float = 0, cwd=None):
 
 # json event format -> parser kind
 _JSON_KINDS = {"opencode-json": "opencode", "claude-json": "claude"}
+_RATE_LIMIT_BACKOFF = 2.0  # seconds before trying the next model on a 429
+
+_RATE_LIMIT_HINTS = ("rate limit", "rate-limit", "rate limited", "rate-limited",
+                     "too many requests", "error 429", "\"code\": 429",
+                     "code: 429", "quota exceed")
+_UNAVAILABLE_HINTS = ("no endpoints found", "not a valid model", "model not found",
+                      "model_not_found", "invalid model", "no allowed providers",
+                      "is not available", "unknown model", "no instances available")
+
+
+def _classify_model_error(output: str) -> str | None:
+    """Detect a per-model failure (so we can rotate to the next model)."""
+    low = (output or "").lower()
+    if any(h in low for h in _RATE_LIMIT_HINTS):
+        return "rate-limit"
+    if any(h in low for h in _UNAVAILABLE_HINTS):
+        return "model-unavailable"
+    return None
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
@@ -271,7 +290,8 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
     auto_flags = list(fw.auto) if auto else []
 
     last_error: Exception | None = None
-    for model in decision.models:
+    models = decision.models
+    for i, model in enumerate(models):
         argv = build_command(template, model, prompt, max_steps) + auto_flags
         try:
             if _runner is not None:                       # tests
@@ -290,6 +310,20 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
         except FileNotFoundError as exc:
             last_error = exc
             continue
+
+        # Rotate to the next model in the list if THIS model failed (rotation /
+        # rate-limit), rather than escalating a whole level. Our own
+        # interventions (step/cost/timeout) are not model faults.
+        if not (step_hit or cost_hit or timeout_hit) and i < len(models) - 1:
+            model_err = _classify_model_error(out)
+            if model_err:
+                nxt = models[i + 1]
+                print(f"  ↻ модель {model} недоступна ({model_err}) → пробую {nxt}",
+                      file=sys.stderr)
+                if model_err == "rate-limit":
+                    time.sleep(_RATE_LIMIT_BACKOFF)
+                continue
+
         return RunResult(code, out or "", err or "", model,
                          step_limit_hit=step_hit, usage=usage,
                          cost_limit_hit=cost_hit, timeout_hit=timeout_hit)

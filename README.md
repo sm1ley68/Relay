@@ -1,5 +1,8 @@
 # Relay — AI-model router
 
+[![CI](https://github.com/sm1ley68/Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/sm1ley68/Relay/actions/workflows/ci.yml)
+[![License: PolyForm NC](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
+
 Single CLI (`relay`) that routes a natural-language task to the cheapest capable agentic
 framework: `opencode` + OpenRouter for levels L0–L2 (free/cheap), `claude` (Pro)
 for L3. Conserves the Claude Pro limit by sending routine work to cheap models
@@ -107,6 +110,17 @@ CLI defined under `[frameworks.*]` with a command template and an output `format
 
 `format` picks the parser: `opencode-json`, `claude-json`, or `text` (any CLI).
 A level marked `metered = true` counts against the subscription/usage window.
+
+**Free-model rotation.** OpenRouter's free models rotate and rate-limit (20/min,
+200/day), so each level holds a **list** of fallbacks. On a `429` / model-unavailable
+error relay rotates to the next model in the list (with a short backoff) instead of
+escalating a whole level. Run `relay models` to see the currently available free /
+cheap models and refresh your `models = [...]` lists.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify and share for any
+**noncommercial** purpose. Commercial use is not permitted.
 
 **Custom ladder without editing the repo:** drop your own `~/.orchestrator/config.toml`
 (or point `$RELAY_CONFIG` at a file). It overrides the packaged default.

@@ -69,6 +69,14 @@ def test_stats_summarizes_journal(tmp_path, capsys):
     assert "эскалаций 1" in out      # one entry escalated
 
 
+def test_list_models_requires_key(monkeypatch, capsys):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    from orchestrator.cli import _list_models
+    rc = _list_models(load_config())
+    assert rc == 1
+    assert "OPENROUTER_API_KEY" in capsys.readouterr().err
+
+
 def test_doctor_reports_and_returns_code(capsys):
     from orchestrator.cli import _doctor
     rc = _doctor(load_config())

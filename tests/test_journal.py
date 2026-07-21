@@ -3,6 +3,16 @@ from pathlib import Path
 from orchestrator.journal import JournalEntry, append, read_all, new_entry
 
 
+def test_read_all_skips_corrupt_line(tmp_path: Path):
+    p = tmp_path / "j.jsonl"
+    append(new_entry("t1", "L0", "b", "opencode", "m", "success", 1, 0.0, []), p)
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write("{ this is not valid json\n")   # e.g. crash mid-append
+    append(new_entry("t2", "L1", "b", "opencode", "m", "success", 1, 0.0, []), p)
+    rows = read_all(p)
+    assert [r.task for r in rows] == ["t1", "t2"]  # corrupt middle line skipped
+
+
 def test_append_and_read_roundtrip(tmp_path: Path):
     p = tmp_path / "sub" / "journal.jsonl"  # parent dir does not exist yet
     e1 = new_entry("fix auth", "L4", "prefix", "claude", "claude",

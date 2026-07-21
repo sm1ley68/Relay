@@ -135,7 +135,7 @@ class ParsedArgs:
     auto: bool = False
 
 
-SUBCOMMANDS = ("run", "rollback", "journal", "stats", "doctor")
+SUBCOMMANDS = ("run", "rollback", "journal", "stats", "doctor", "models")
 
 
 def parse_args(argv: list[str]) -> ParsedArgs:
@@ -379,6 +379,9 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
     if args.command == "doctor":
         return _doctor(config)
 
+    if args.command == "models":
+        return _list_models(config)
+
     if args.command == "rollback":
         print("Откат: git reset --hard <checkpoint>. "
               "Последний чекпоинт см. в `git log`.", file=sys.stderr)
@@ -539,6 +542,50 @@ def _doctor(config: Config) -> int:
     else:
         print(_color("\nВсё на месте. Запускай `relay` в проекте.", GREEN))
     return 0 if problems == 0 else 1
+
+
+def _list_models(config: Config) -> int:
+    """List current free / cheap OpenRouter models — candidates for the ladder."""
+    import urllib.request
+    import json as _json
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        print("Нужен OPENROUTER_API_KEY (в ~/.orchestrator/.env), чтобы получить "
+              "список моделей OpenRouter.", file=sys.stderr)
+        return 1
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/models",
+        headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = _json.loads(resp.read())
+    except Exception as exc:
+        print(f"Не удалось получить модели: {exc}", file=sys.stderr)
+        return 1
+
+    free, cheap = [], []
+    for m in data.get("data", []):
+        p = m.get("pricing", {})
+        pin = float(p.get("prompt", 0) or 0) * 1e6
+        pout = float(p.get("completion", 0) or 0) * 1e6
+        ctx = m.get("context_length", 0) or 0
+        if pin == 0 and pout == 0:
+            free.append((ctx, m["id"]))
+        elif pin <= 1.0:
+            cheap.append((pin, pout, m["id"]))
+    free.sort(reverse=True)
+    cheap.sort()
+
+    print(_color(f"Бесплатные модели ({len(free)}) — для L0/L1:", ACCENT, bold=True))
+    for ctx, ident in free:
+        print(f"  openrouter/{ident}   ctx={ctx}")
+    print(_color("\nДешёвые (≤ $1/1M вход) — для L2:", ACCENT, bold=True))
+    for pin, pout, ident in cheap[:15]:
+        print(f"  openrouter/{ident}   ${pin:.2f}/${pout:.2f}")
+    print(_color("\nВставь нужные в models=[...] в ~/.orchestrator/config.toml "
+                 "(с префиксом openrouter/). Relay сам ротирует список при 429.",
+                 DIM))
+    return 0
 
 
 def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
@@ -754,7 +801,15 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args(argv)
     load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
-    config = load_config()
+    try:
+        config = load_config()
+    except (KeyError, ValueError, OSError) as exc:
+        detail = (f"отсутствует ключ {exc}" if isinstance(exc, KeyError)
+                  else str(exc))
+        print(f"Ошибка в config.toml: {detail}\n"
+              "Проверь ~/.orchestrator/config.toml (или встроенный конфиг).",
+              file=sys.stderr)
+        return 7
     repo_root = Path.cwd()
 
     # Bare `relay` (no arguments at all) opens the interactive REPL.
