@@ -1,4 +1,5 @@
 max_steps = 40
+task_timeout_seconds = 600
 cost_ceiling_usd = 0.50
 pro_window_hours = 5.0
 pro_window_max_runs = 40

@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 
 from .config import Config
@@ -24,6 +25,7 @@ class RunResult:
     step_limit_hit: bool = False
     usage: dict | None = None
     cost_limit_hit: bool = False
+    timeout_hit: bool = False
 
 
 def _safe(s: str) -> str:
@@ -166,41 +168,63 @@ def _framework_env(cwd) -> dict:
 
 
 def _run_streaming_json(argv: list[str], framework: str, *, max_steps: int,
-                        cost_ceiling: float, cwd=None):
+                        cost_ceiling: float, timeout: float = 0, cwd=None):
     # Stream a framework's json events: print text live, collect usage, and
-    # terminate the process if the step limit or cost ceiling is exceeded.
+    # terminate the process on step limit / cost ceiling / wall-clock timeout.
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1,
                             cwd=cwd, env=_framework_env(cwd))
     assert proc.stdout is not None
     parser = _StreamParser(framework)
-    step_limit_hit = cost_limit_hit = False
+    step_limit_hit = cost_limit_hit = timeout_hit = False
+
+    # Watchdog: kill a hung agent that produces no output.
+    timer = None
+    if timeout and timeout > 0:
+        flag = {"fired": False}
+
+        def _on_timeout():
+            flag["fired"] = True
+            proc.kill()
+        timer = threading.Timer(timeout, _on_timeout)
+        timer.daemon = True
+        timer.start()
 
     def _write(s: str) -> None:
         sys.stdout.write(s)
         sys.stdout.flush()
 
-    for line in proc.stdout:
-        parser.feed(line, _write)
-        if max_steps and parser.usage["steps"] > max_steps:
-            step_limit_hit = True
-            proc.terminate()
-            break
-        if cost_ceiling and parser.usage["cost"] > cost_ceiling:
-            cost_limit_hit = True
-            proc.terminate()
-            break
+    try:
+        for line in proc.stdout:
+            parser.feed(line, _write)
+            if max_steps and parser.usage["steps"] > max_steps:
+                step_limit_hit = True
+                proc.terminate()
+                break
+            if cost_ceiling and parser.usage["cost"] > cost_ceiling:
+                cost_limit_hit = True
+                proc.terminate()
+                break
+    finally:
+        if timer is not None:
+            timeout_hit = flag["fired"]
+            timer.cancel()
     proc.wait()
     return (proc.returncode, parser.text, "", parser.usage,
-            step_limit_hit, cost_limit_hit)
+            step_limit_hit, cost_limit_hit, timeout_hit)
 
 
 _JSON_FRAMEWORKS = {"opencode", "claude"}
+# Flags that auto-approve the agent's actions (edits/tools) without prompting.
+_AUTO_FLAGS = {
+    "opencode": ["--auto"],
+    "claude": ["--permission-mode", "acceptEdits"],
+}
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
                   max_steps: int, *, repo_root=None, dry_run: bool = False,
-                  _runner=None) -> RunResult:
+                  auto: bool = False, _runner=None) -> RunResult:
     template = (config.opencode_cmd if decision.framework == "opencode"
                 else config.claude_cmd)
     runner = _runner or _default_runner
@@ -215,24 +239,27 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
     # an injected _runner (tests) always takes the plain path.
     use_json = _runner is None and decision.framework in _JSON_FRAMEWORKS
     cwd = str(repo_root) if repo_root is not None else None
+    auto_flags = _AUTO_FLAGS.get(decision.framework, []) if auto else []
 
     last_error: Exception | None = None
     for model in decision.models:
-        argv = build_command(template, model, prompt, max_steps)
+        argv = build_command(template, model, prompt, max_steps) + auto_flags
         try:
             if use_json:
-                code, out, err, usage, step_hit, cost_hit = _run_streaming_json(
+                (code, out, err, usage, step_hit, cost_hit,
+                 timeout_hit) = _run_streaming_json(
                     argv, decision.framework, max_steps=max_steps,
-                    cost_ceiling=config.cost_ceiling_usd, cwd=cwd)
+                    cost_ceiling=config.cost_ceiling_usd,
+                    timeout=config.task_timeout_seconds, cwd=cwd)
             else:
                 code, out, err = runner(argv)
-                usage, step_hit, cost_hit = None, False, False
+                usage, step_hit, cost_hit, timeout_hit = None, False, False, False
         except FileNotFoundError as exc:
             last_error = exc
             continue
         return RunResult(code, out or "", err or "", model,
                          step_limit_hit=step_hit, usage=usage,
-                         cost_limit_hit=cost_hit)
+                         cost_limit_hit=cost_hit, timeout_hit=timeout_hit)
 
     raise FrameworkNotFound(
         f"Не найден бинарь каркаса '{decision.framework}'. "

@@ -8,6 +8,14 @@ and escalating only on failure.
 Ladder: **L0** North Mini Code (free) · **L1** Laguna M.1 (free) ·
 **L2** DeepSeek V4 Flash ($0.14/$0.28 per 1M) · **L3** Claude Code (Pro subscription).
 
+## Quick start
+
+    git clone <repo> && cd Relay
+    ./setup.sh          # installs relay, checks tools, seeds ~/.orchestrator/.env
+    # put your OpenRouter key in ~/.orchestrator/.env
+    relay doctor        # verify Python / opencode / claude / key are ready
+    cd ~/your-project && relay
+
 ## Install
 
     pip install -e .
@@ -39,10 +47,16 @@ For normal use you don't need any flags — type the task, the level is auto-cho
 to retype flags):
 
     ❯ /dry                 # dry-run mode on   → prompt becomes  [dry] ❯
+    ❯ /auto                # agent edits files without asking permission
     ❯ /steps 10            # cap agent steps   → [dry steps=10] ❯
     ❯ /test pytest -q      # run tests after each task, escalate on failure
     ❯ /guard off           # skip the checkpoint commit
+    ❯ /undo                # roll back the last task's changes
+    ❯ /stats               # analytics: tasks per level, cost, escalation rate
     ❯ /journal             # decision log · /config settings · /help all commands
+
+Command history (↑/↓, Ctrl-R search), line editing and `/`-command tab-completion
+work in the REPL. Subcommands also work one-shot: `relay stats`, `relay doctor`.
 
 One-shot (task as arguments):
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -131,6 +132,10 @@ class ParsedArgs:
     test_cmd: str | None
     dry_run: bool
     no_commit_guard: bool
+    auto: bool = False
+
+
+SUBCOMMANDS = ("run", "rollback", "journal", "stats", "doctor")
 
 
 def parse_args(argv: list[str]) -> ParsedArgs:
@@ -140,6 +145,7 @@ def parse_args(argv: list[str]) -> ParsedArgs:
     test_cmd = None
     dry_run = False
     no_commit_guard = False
+    auto = False
     words: list[str] = []
 
     it = iter(argv)
@@ -147,12 +153,14 @@ def parse_args(argv: list[str]) -> ParsedArgs:
         low = tok.lower()
         if low in PREFIXES:
             explicit_level = PREFIXES[low]
-        elif low in ("run", "rollback", "journal") and not words:
+        elif low in SUBCOMMANDS and not words:
             command = low
         elif tok == "--dry-run":
             dry_run = True
         elif tok == "--no-commit-guard":
             no_commit_guard = True
+        elif tok == "--auto":
+            auto = True
         elif tok == "--max-steps":
             max_steps = int(next(it))
         elif tok == "--test-cmd":
@@ -161,7 +169,7 @@ def parse_args(argv: list[str]) -> ParsedArgs:
             words.append(tok)
 
     return ParsedArgs(command, " ".join(words), explicit_level, max_steps,
-                      test_cmd, dry_run, no_commit_guard)
+                      test_cmd, dry_run, no_commit_guard, auto)
 
 
 def ensure_git_repo(root: Path) -> bool:
@@ -260,7 +268,8 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
     classify = d.get("classify", router.classify)
     run = d.get("run", lambda dec, prompt, cfg, steps, dry_run:
                 runner.run_framework(dec, prompt, cfg, steps,
-                                     repo_root=repo_root, dry_run=dry_run))
+                                     repo_root=repo_root, dry_run=dry_run,
+                                     auto=args.auto))
     detect = d.get("detect_failure", lambda res, cfg, root:
                    escalate.detect_failure(res, cfg, root))
     checkpoint = d.get("checkpoint", lambda root: checkpoint_commit(root))
@@ -361,6 +370,13 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
             print(f"{e.timestamp}  {e.level:3}  {e.outcome:12}  {e.task}")
         return 0
 
+    if args.command == "stats":
+        _print_stats(config)
+        return 0
+
+    if args.command == "doctor":
+        return _doctor(config)
+
     if args.command == "rollback":
         print("Откат: git reset --hard <checkpoint>. "
               "Последний чекпоинт см. в `git log`.", file=sys.stderr)
@@ -393,11 +409,13 @@ def _print_help(config: Config) -> None:
         ("<задача>", "описать задачу — уровень выберется сам (флаги не нужны)"),
         ("/l0 .. /l3 <задача>", "форсировать уровень"),
         ("/dry [on|off]", "режим «показать, не запуская» на всю сессию"),
+        ("/auto [on|off]", "агент правит файлы без запроса разрешений"),
         ("/steps N", "лимит шагов агента на сессию (/steps off — сброс)"),
         ("/test <cmd>", "прогонять тест после задачи (/test off — выкл)"),
         ("/guard [on|off]", "чекпоинт-коммит перед агентом (по умолч. вкл)"),
         ("/undo", "откатить изменения последней задачи"),
         ("/journal", "журнал решений (уровень, исход, стоимость)"),
+        ("/stats", "аналитика: задачи по уровням, стоимость, эскалации"),
         ("/config", "лестница моделей и настройки"),
         ("/clear", "очистить экран"),
         ("/help", "эта справка"),
@@ -439,6 +457,69 @@ def _last_checkpoint(repo_root: Path) -> str | None:
     return sha or None
 
 
+def _print_stats(config: Config) -> None:
+    entries = journal.read_all(Path(config.journal_path).expanduser())
+    if not entries:
+        print(_color("Журнал пуст — ещё не было задач.", DIM))
+        return
+    total = len(entries)
+    total_cost = sum(e.cost_usd for e in entries)
+    escalated = sum(1 for e in entries if e.escalations)
+    by_level: dict[str, int] = {}
+    by_outcome: dict[str, int] = {}
+    for e in entries:
+        by_level[e.level] = by_level.get(e.level, 0) + 1
+        key = e.outcome.split(":")[0]
+        by_outcome[key] = by_outcome.get(key, 0) + 1
+
+    print(_color(f"Задач: {total} · суммарно ${total_cost:.4f} · "
+                 f"в среднем ${total_cost / total:.4f} · "
+                 f"эскалаций {escalated} ({escalated * 100 // total}%)",
+                 ACCENT, bold=True))
+    print(_color("По уровням:", DIM))
+    for lvl in LADDER:
+        n = by_level.get(lvl, 0)
+        if n:
+            bar = "█" * min(30, n)
+            print(f"  {_color(lvl, _level_rgb(config, lvl))} {n:>4}  {bar}")
+    print(_color("Исходы:", DIM))
+    for outcome, n in sorted(by_outcome.items(), key=lambda x: -x[1]):
+        print(f"  {outcome:14} {n}")
+
+
+def _doctor(config: Config) -> int:
+    """Check the environment and report what's ready / missing."""
+    import shutil
+    ok = _color("✓", GREEN)
+    bad = _color("✗", (220, 100, 100))
+    print(_color("Relay doctor — проверка окружения:", ACCENT, bold=True))
+    problems = 0
+
+    py_ok = sys.version_info >= (3, 13)
+    print(f"  {ok if py_ok else bad} Python {sys.version_info.major}."
+          f"{sys.version_info.minor}" + ("" if py_ok else "  (нужен 3.13+)"))
+    problems += not py_ok
+
+    for tool, hint in (("opencode", "npm i -g opencode-ai  (для L0–L2)"),
+                       ("claude", "поставь Claude Code и залогинься  (для L3)"),
+                       ("git", "нужен git")):
+        found = shutil.which(tool)
+        print(f"  {ok if found else bad} {tool}" +
+              (f"  {found}" if found else f"  — не найден: {hint}"))
+        problems += not found
+
+    key = bool(os.environ.get("OPENROUTER_API_KEY"))
+    print(f"  {ok if key else bad} OPENROUTER_API_KEY" +
+          ("" if key else "  — задай в ~/.orchestrator/.env"))
+    problems += not key
+
+    if problems:
+        print(_color(f"\nНе хватает {problems} — см. подсказки выше.", DIM))
+    else:
+        print(_color("\nВсё на месте. Запускай `relay` в проекте.", GREEN))
+    return 0 if problems == 0 else 1
+
+
 def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
     """Handle a /command. Returns 'exit' to quit, '' if handled, None if not one."""
     cmd = line.split()[0].lower()
@@ -464,6 +545,9 @@ def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
     if cmd == "/config":
         _print_config(config, repo_root)
         return ""
+    if cmd == "/stats":
+        _print_stats(config)
+        return ""
     if cmd == "/clear":
         print("\x1b[2J\x1b[H", end="")
         print(_banner(repo_root, config))
@@ -473,7 +557,7 @@ def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
 
 def _new_session() -> dict:
     return {"dry_run": False, "no_commit_guard": False,
-            "max_steps": None, "test_cmd": None}
+            "max_steps": None, "test_cmd": None, "auto": False}
 
 
 def _session_command(line: str, session: dict) -> str | None:
@@ -488,6 +572,10 @@ def _session_command(line: str, session: dict) -> str | None:
     if cmd == "/dry":
         session["dry_run"] = onoff(session["dry_run"])
         return _color(f"режим dry-run: {'вкл' if session['dry_run'] else 'выкл'}", DIM)
+    if cmd == "/auto":
+        session["auto"] = onoff(session["auto"])
+        return _color(f"авто-одобрение правок: {'вкл' if session['auto'] else 'выкл'}"
+                      + (" (агент правит без запроса)" if session["auto"] else ""), DIM)
     if cmd == "/guard":
         # guard on = checkpoint commit before agents; off = skip it
         session["no_commit_guard"] = (
@@ -519,6 +607,8 @@ def _apply_session(args: ParsedArgs, session: dict) -> ParsedArgs:
         args.dry_run = True
     if session["no_commit_guard"]:
         args.no_commit_guard = True
+    if session["auto"]:
+        args.auto = True
     if args.max_steps is None:
         args.max_steps = session["max_steps"]
     if args.test_cmd is None:
@@ -536,8 +626,45 @@ def _prompt(session: dict) -> str:
         tags.append(f"steps={session['max_steps']}")
     if session["test_cmd"]:
         tags.append("test")
+    if session["auto"]:
+        tags.append("auto")
     status = _color(f"[{' '.join(tags)}] ", DIM) if tags else ""
     return status + _color("❯ ", bold=True)
+
+
+_REPL_COMMANDS = ["/help", "/journal", "/config", "/stats", "/clear", "/undo",
+                  "/dry", "/auto", "/steps", "/test", "/guard", "/exit",
+                  "/l0", "/l1", "/l2", "/l3"]
+
+
+def _setup_readline() -> None:
+    """Enable ↑/↓ history, Ctrl-R search, line editing and tab-completion."""
+    try:
+        import readline
+    except ImportError:
+        return
+    histfile = Path.home() / ".orchestrator" / "history"
+    histfile.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        readline.read_history_file(histfile)
+    except (FileNotFoundError, OSError):
+        pass
+    readline.set_history_length(2000)
+    import atexit
+    atexit.register(lambda: _save_history(readline, histfile))
+
+    def completer(text, state):
+        opts = [c + " " for c in _REPL_COMMANDS if c.startswith(text)]
+        return opts[state] if state < len(opts) else None
+    readline.set_completer(completer)
+    readline.parse_and_bind("tab: complete")
+
+
+def _save_history(readline, histfile: Path) -> None:
+    try:
+        readline.write_history_file(histfile)
+    except OSError:
+        pass
 
 
 def interactive(config: Config, repo_root: Path, *, input_fn=None,
@@ -546,6 +673,8 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
     input_fn = input_fn or input  # resolved at call time so tests can patch it
     dispatch = dispatch or _dispatch
     session = _new_session()
+    if input_fn is input:  # only touch readline for a real interactive session
+        _setup_readline()
     print(_banner(repo_root, config))
     if not ensure_git_repo(repo_root):
         print(_color(

@@ -37,6 +37,47 @@ def test_attempt_note_no_output():
     assert _attempt_note("L0", "exit-code:1", "") == "L0: exit-code:1"
 
 
+def test_parse_auto_flag_and_subcommands():
+    assert parse_args(["--auto", "do", "x"]).auto is True
+    assert parse_args(["do", "x"]).auto is False
+    assert parse_args(["stats"]).command == "stats"
+    assert parse_args(["doctor"]).command == "doctor"
+
+
+def test_session_auto_mode():
+    from orchestrator.cli import _new_session, _session_command, _apply_session
+    s = _new_session()
+    assert _session_command("/auto", s) is not None and s["auto"] is True
+    a = _apply_session(parse_args(["fix bug"]), s)
+    assert a.auto is True
+
+
+def test_stats_summarizes_journal(tmp_path, capsys):
+    import dataclasses
+    from orchestrator import journal as J
+    from orchestrator.cli import _print_stats
+    p = tmp_path / "j.jsonl"
+    J.append(J.new_entry("t1", "L0", "trivial", "opencode", "m",
+                         "success", 0, 0.0, []), p)
+    J.append(J.new_entry("t2", "L2", "llm:3", "opencode", "m",
+                         "success", 0, 0.005, ["L0->L1", "L1->L2"]), p)
+    cfg = dataclasses.replace(load_config(), journal_path=str(p))
+    _print_stats(cfg)
+    out = capsys.readouterr().out
+    assert "Задач: 2" in out
+    assert "$0.0050" in out          # total cost
+    assert "эскалаций 1" in out      # one entry escalated
+
+
+def test_doctor_reports_and_returns_code(capsys):
+    from orchestrator.cli import _doctor
+    rc = _doctor(load_config())
+    out = capsys.readouterr().out
+    assert "Relay doctor" in out
+    assert "Python" in out and "git" in out
+    assert rc in (0, 1)
+
+
 def test_level_rgb_by_tier():
     from orchestrator.cli import _level_rgb, GREEN, YELLOW, MAGENTA
     cfg = load_config()
@@ -93,7 +134,7 @@ def test_session_commands_set_defaults():
 def test_apply_session_folds_defaults_but_inline_wins():
     from orchestrator.cli import _apply_session
     session = {"dry_run": True, "no_commit_guard": False,
-               "max_steps": 5, "test_cmd": "pytest"}
+               "max_steps": 5, "test_cmd": "pytest", "auto": False}
     # inline line has no max_steps -> takes session's 5; dry_run from session
     a = parse_args(["do", "thing"])
     _apply_session(a, session)

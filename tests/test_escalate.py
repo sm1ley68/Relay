@@ -32,6 +32,11 @@ def test_detect_failure_step_limit_beats_signal_exit_code():
     assert detect_failure(res, CFG, Path(".")) == "step-limit"
 
 
+def test_detect_failure_on_timeout():
+    res = RunResult(-9, "", "", "m", timeout_hit=True)
+    assert detect_failure(res, CFG, Path(".")) == "timeout"
+
+
 def test_detect_failure_on_step_limit():
     res = RunResult(0, "", "", "m", True)
     assert detect_failure(res, CFG, Path(".")) == "step-limit"

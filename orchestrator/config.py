@@ -68,6 +68,7 @@ class Config:
     journal_path: str
     budget_path: str
     test_cmd: str | None
+    task_timeout_seconds: int
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -100,4 +101,5 @@ def load_config(path: Path | None = None) -> Config:
         journal_path=raw["journal_path"],
         budget_path=raw["budget_path"],
         test_cmd=test_cmd,
+        task_timeout_seconds=int(raw.get("task_timeout_seconds", 600)),
     )
