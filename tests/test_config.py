@@ -13,7 +13,46 @@ def test_load_default_config():
     assert cfg.levels["L2"].models == ["openrouter/deepseek/deepseek-v4-flash"]
     assert cfg.levels["L2"].price_out == 0.28
     assert cfg.test_cmd is None  # empty string normalizes to None
-    assert "{model}" in cfg.opencode_cmd
+    assert "{model}" in cfg.frameworks["opencode"].cmd
+    assert cfg.frameworks["claude"].format == "claude-json"
+    assert cfg.levels["L3"].metered is True
+
+
+def test_codex_framework_is_pluggable():
+    cfg = load_config()
+    assert "codex" in cfg.frameworks
+    assert cfg.frameworks["codex"].format == "text"   # any CLI, no token stats
+    assert "codex" in cfg.frameworks["codex"].cmd
+
+
+def test_config_override_via_env(tmp_path: Path, monkeypatch):
+    c = tmp_path / "custom.toml"
+    c.write_text(
+        'max_steps = 5\n'
+        'cost_ceiling_usd = 0.1\n'
+        'pro_window_hours = 5.0\n'
+        'pro_window_max_runs = 10\n'
+        'classifier_model = "x"\n'
+        'journal_path = "j"\n'
+        'budget_path = "b"\n'
+        'test_cmd = ""\n'
+        '[frameworks.codex]\n'
+        'cmd = \'codex exec "{prompt}"\'\n'
+        'format = "text"\n'
+        'auto = ["--yolo"]\n'
+        '[levels.L0]\n'
+        'models = ["gpt"]\n'
+        'price_in = 0.0\n'
+        'price_out = 0.0\n'
+        'framework = "codex"\n'
+        'metered = true\n'
+    )
+    monkeypatch.setenv("RELAY_CONFIG", str(c))
+    cfg = load_config()
+    assert cfg.active_path == str(c)
+    assert cfg.levels["L0"].framework == "codex"
+    assert cfg.levels["L0"].metered is True
+    assert cfg.frameworks["codex"].auto == ["--yolo"]
 
 
 def test_toml_override(tmp_path: Path):

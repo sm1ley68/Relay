@@ -1,0 +1,50 @@
+# Relay ladder for a Codex (ChatGPT) user — no OpenRouter needed.
+# Copy to ~/.orchestrator/config.toml (or point $RELAY_CONFIG at it).
+#
+# Codex is authenticated via `codex login` (your ChatGPT account). Since there is
+# no cheap OpenRouter tier here, every level uses Codex — you still get Relay's
+# REPL, journal, /undo, safeguards and routing. Tune per-level model/effort in the
+# framework command if you want a cheaper lower tier.
+
+max_steps = 40
+task_timeout_seconds = 600
+cost_ceiling_usd = 0.50
+pro_window_hours = 5.0
+pro_window_max_runs = 40
+classifier_model = ""          # no OpenRouter classifier; heuristics + default level
+journal_path = "~/.orchestrator/journal.jsonl"
+budget_path = "~/.orchestrator/budget.json"
+test_cmd = ""
+
+[frameworks.codex]
+cmd = 'codex exec "{prompt}"'
+format = "text"                # any CLI; live output, no token stats
+auto = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[levels.L0]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L1]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L2]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L3]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true

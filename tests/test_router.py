@@ -37,6 +37,18 @@ def test_llm_score_parses_digit():
     assert llm_score("x", "m", "key", _opener=lambda req, timeout=0: resp) == 4
 
 
+def test_classify_no_key_skips_network(tmp_path, monkeypatch):
+    # Codex-only setup: no OpenRouter key -> no network call, default level.
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    called = {"n": 0}
+    import orchestrator.router as r
+    monkeypatch.setattr(r, "llm_score",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    d = classify("нейтральная фраза без ключевых слов", CFG, repo_root=tmp_path)
+    assert d.level == "L2" and d.basis == "no-classifier"
+    assert called["n"] == 0  # llm_score never invoked without a key
+
+
 def test_classify_degrades_when_llm_raises(tmp_path, monkeypatch):
     # neutral task (no keywords, empty repo) -> level 3; llm call raises
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")

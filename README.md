@@ -90,10 +90,30 @@ Claude Code (L3), e.g.:
 
 The real cost is recorded in the decision journal.
 
-## Config
+## Config & frameworks
 
-Edit `orchestrator/config.toml`: model ladder (fallback lists), framework command
-templates, step limit, cost ceiling, Pro-window thresholds.
+Relay is framework-agnostic. Each level names a **framework** — a pluggable agent
+CLI defined under `[frameworks.*]` with a command template and an output `format`:
+
+    [frameworks.opencode]                 # OpenRouter models, full token stats
+    cmd = 'opencode run --format json -m {model} "{prompt}"'
+    format = "opencode-json"
+    auto = ["--auto"]
+
+    [frameworks.codex]                    # OpenAI Codex CLI (ChatGPT login)
+    cmd = 'codex exec "{prompt}"'
+    format = "text"                       # any CLI; live output, no token stats
+    auto = ["--dangerously-bypass-approvals-and-sandbox"]
+
+`format` picks the parser: `opencode-json`, `claude-json`, or `text` (any CLI).
+A level marked `metered = true` counts against the subscription/usage window.
+
+**Custom ladder without editing the repo:** drop your own `~/.orchestrator/config.toml`
+(or point `$RELAY_CONFIG` at a file). It overrides the packaged default.
+
+**Codex / ChatGPT user, no OpenRouter?** Copy `config.codex.toml` to
+`~/.orchestrator/config.toml` — the whole ladder runs on `codex` (you keep the
+REPL, journal, `/undo`, safeguards and routing; token stats need a json framework).
 
 ## Safeguards
 

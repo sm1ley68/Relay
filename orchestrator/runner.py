@@ -214,20 +214,52 @@ def _run_streaming_json(argv: list[str], framework: str, *, max_steps: int,
             step_limit_hit, cost_limit_hit, timeout_hit)
 
 
-_JSON_FRAMEWORKS = {"opencode", "claude"}
-# Flags that auto-approve the agent's actions (edits/tools) without prompting.
-_AUTO_FLAGS = {
-    "opencode": ["--auto"],
-    "claude": ["--permission-mode", "acceptEdits"],
-}
+def _run_streaming_plain(argv: list[str], *, timeout: float = 0, cwd=None):
+    # Stream any CLI's output live (no token stats), with a wall-clock timeout.
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            cwd=cwd, env=_framework_env(cwd))
+    assert proc.stdout is not None
+    captured: list[str] = []
+    timeout_hit = False
+    timer = None
+    if timeout and timeout > 0:
+        flag = {"fired": False}
+
+        def _on_timeout():
+            flag["fired"] = True
+            proc.kill()
+        timer = threading.Timer(timeout, _on_timeout)
+        timer.daemon = True
+        timer.start()
+    try:
+        for line in proc.stdout:
+            line = _safe(line)
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            captured.append(line)
+    finally:
+        if timer is not None:
+            timeout_hit = flag["fired"]
+            timer.cancel()
+    proc.wait()
+    return proc.returncode, "".join(captured), "", timeout_hit
+
+
+# json event format -> parser kind
+_JSON_KINDS = {"opencode-json": "opencode", "claude-json": "claude"}
 
 
 def run_framework(decision: RouteDecision, prompt: str, config: Config,
                   max_steps: int, *, repo_root=None, dry_run: bool = False,
                   auto: bool = False, _runner=None) -> RunResult:
-    template = (config.opencode_cmd if decision.framework == "opencode"
-                else config.claude_cmd)
-    runner = _runner or _default_runner
+    fw = config.frameworks.get(decision.framework)
+    if fw is None:
+        raise FrameworkNotFound(
+            f"Каркас '{decision.framework}' не описан в config.toml "
+            f"(секция [frameworks.{decision.framework}]).")
+    template = fw.cmd
+    kind = _JSON_KINDS.get(fw.format)  # None => plain "text" streaming
 
     if dry_run:
         model = decision.models[0]
@@ -235,25 +267,26 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
         print("[dry-run]", " ".join(shlex.quote(a) for a in argv))
         return RunResult(0, "", "", model, False)
 
-    # Parse the framework's json stream to surface usage and enforce limits;
-    # an injected _runner (tests) always takes the plain path.
-    use_json = _runner is None and decision.framework in _JSON_FRAMEWORKS
     cwd = str(repo_root) if repo_root is not None else None
-    auto_flags = _AUTO_FLAGS.get(decision.framework, []) if auto else []
+    auto_flags = list(fw.auto) if auto else []
 
     last_error: Exception | None = None
     for model in decision.models:
         argv = build_command(template, model, prompt, max_steps) + auto_flags
         try:
-            if use_json:
+            if _runner is not None:                       # tests
+                code, out, err = _runner(argv)
+                usage, step_hit, cost_hit, timeout_hit = None, False, False, False
+            elif kind is not None:                        # json framework
                 (code, out, err, usage, step_hit, cost_hit,
                  timeout_hit) = _run_streaming_json(
-                    argv, decision.framework, max_steps=max_steps,
+                    argv, kind, max_steps=max_steps,
                     cost_ceiling=config.cost_ceiling_usd,
                     timeout=config.task_timeout_seconds, cwd=cwd)
-            else:
-                code, out, err = runner(argv)
-                usage, step_hit, cost_hit, timeout_hit = None, False, False, False
+            else:                                         # any other CLI (text)
+                code, out, err, timeout_hit = _run_streaming_plain(
+                    argv, timeout=config.task_timeout_seconds, cwd=cwd)
+                usage, step_hit, cost_hit = None, False, False
         except FileNotFoundError as exc:
             last_error = exc
             continue

@@ -46,6 +46,18 @@ def load_env_file(path: Path | None = None) -> None:
         _apply_env_file(p)
 
 
+GLOBAL_CONFIG_PATH: Path = Path.home() / ".orchestrator" / "config.toml"
+
+
+@dataclass
+class Framework:
+    """A pluggable agent CLI: how to invoke it and read its output."""
+    name: str
+    cmd: str            # command template with {model}/{prompt}/{steps}
+    format: str         # "opencode-json" | "claude-json" | "text"
+    auto: list[str]     # flags that auto-approve the agent's actions
+
+
 @dataclass
 class Level:
     name: str
@@ -53,13 +65,13 @@ class Level:
     price_in: float
     price_out: float
     framework: str
+    metered: bool = False  # subscription-gated (counts against the usage window)
 
 
 @dataclass
 class Config:
     levels: dict[str, Level]
-    opencode_cmd: str
-    claude_cmd: str
+    frameworks: dict[str, Framework]
     max_steps: int
     cost_ceiling_usd: float
     pro_window_hours: float
@@ -69,10 +81,27 @@ class Config:
     budget_path: str
     test_cmd: str | None
     task_timeout_seconds: int
+    active_path: str = ""
+
+
+def _resolve_config_path(path: Path | None) -> Path:
+    """arg > $RELAY_CONFIG > ~/.orchestrator/config.toml > packaged default."""
+    if path is not None:
+        return path
+    env = os.environ.get("RELAY_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    if GLOBAL_CONFIG_PATH.exists():
+        return GLOBAL_CONFIG_PATH
+    return DEFAULT_CONFIG_PATH
+
+
+# built-in output formats per known framework (for back-compat synthesis)
+_BUILTIN_FORMATS = {"opencode": "opencode-json", "claude": "claude-json"}
 
 
 def load_config(path: Path | None = None) -> Config:
-    path = path or DEFAULT_CONFIG_PATH
+    path = _resolve_config_path(path)
     with open(path, "rb") as fh:
         raw = tomllib.load(fh)
 
@@ -83,16 +112,35 @@ def load_config(path: Path | None = None) -> Config:
             price_in=float(body["price_in"]),
             price_out=float(body["price_out"]),
             framework=body["framework"],
+            metered=bool(body.get("metered", False)),
         )
         for name, body in raw["levels"].items()
     }
+
+    # Frameworks: prefer an explicit [frameworks.*] section; otherwise synthesize
+    # from the legacy opencode_cmd/claude_cmd keys (back-compat).
+    frameworks: dict[str, Framework] = {}
+    for name, body in raw.get("frameworks", {}).items():
+        frameworks[name] = Framework(
+            name=name,
+            cmd=body["cmd"],
+            format=body.get("format", _BUILTIN_FORMATS.get(name, "text")),
+            auto=list(body.get("auto", [])),
+        )
+    for legacy, key in (("opencode", "opencode_cmd"), ("claude", "claude_cmd")):
+        if legacy not in frameworks and key in raw:
+            frameworks[legacy] = Framework(
+                name=legacy, cmd=raw[key],
+                format=_BUILTIN_FORMATS[legacy],
+                auto=(["--auto"] if legacy == "opencode"
+                      else ["--permission-mode", "acceptEdits"]),
+            )
 
     test_cmd = raw.get("test_cmd") or None
 
     return Config(
         levels=levels,
-        opencode_cmd=raw["opencode_cmd"],
-        claude_cmd=raw["claude_cmd"],
+        frameworks=frameworks,
         max_steps=int(raw["max_steps"]),
         cost_ceiling_usd=float(raw["cost_ceiling_usd"]),
         pro_window_hours=float(raw["pro_window_hours"]),
@@ -102,4 +150,5 @@ def load_config(path: Path | None = None) -> Config:
         budget_path=raw["budget_path"],
         test_cmd=test_cmd,
         task_timeout_seconds=int(raw.get("task_timeout_seconds", 600)),
+        active_path=str(path),
     )

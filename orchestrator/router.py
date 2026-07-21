@@ -149,6 +149,10 @@ def classify(task: str, config: Config, *, explicit_level: str | None = None,
 
     import os
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        # No OpenRouter key (e.g. a Codex-only setup): skip the network call and
+        # default to the workhorse level; heuristics still route the obvious cases.
+        return _decision(score_to_level(3), config, "no-classifier")
     try:
         score = llm_score(task, config.classifier_model, api_key)
     except Exception:

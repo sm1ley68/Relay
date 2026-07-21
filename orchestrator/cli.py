@@ -246,6 +246,8 @@ def _explain_basis(basis: str) -> str:
         return "выбрано вручную"
     if basis == "llm-unavailable":
         return "классификатор недоступен, L2 по умолчанию"
+    if basis == "no-classifier":
+        return "без классификатора (нет ключа), L2 по умолчанию"
     if basis.startswith("llm:"):
         return f"классификатор LLM: сложность {basis.split(':', 1)[1]}/5"
     if basis.startswith("heuristic:"):
@@ -296,17 +298,17 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         print(f"{_color('→', DIM)} {lvl} · {_color(model, DIM)}  "
               f"{_color('(' + _explain_basis(decision.basis) + ')', DIM)}")
 
-        on_claude = decision.framework == "claude"
-        if on_claude and not args.dry_run and not pro.can_run():
-            print("Окно Claude Pro на исходе — поставьте задачу в очередь "
-                  "или подождите сброса лимита.", file=sys.stderr)
+        metered = config.levels[decision.level].metered
+        if metered and not args.dry_run and not pro.can_run():
+            print(f"Окно подписки ({decision.framework}) на исходе — поставьте "
+                  "задачу в очередь или подождите сброса лимита.", file=sys.stderr)
             entry = journal.new_entry(args.task, decision.level, decision.basis,
                                       decision.framework, "", "pro-exhausted",
                                       0, 0.0, escalations)
             journal_append(entry, Path(config.journal_path).expanduser())
             return 2
 
-        if on_claude and not args.dry_run:
+        if metered and not args.dry_run:
             pro.record_run()
 
         result = run(decision, prompt, config, max_steps, args.dry_run)
@@ -440,11 +442,16 @@ def _print_config(config: Config, repo_root: Path) -> None:
         else:
             price = f"${L.price_in}/${L.price_out} за 1M"
         print(f"  {_color(lvl, ACCENT)} · {L.models[0]} · {L.framework} · {price}")
+    print(_color("Каркасы:", ACCENT, bold=True))
+    for name, fw in config.frameworks.items():
+        print(f"  {name} · {fw.format} · {fw.cmd}")
     print(_color("Настройки:", ACCENT, bold=True))
     print(f"  классификатор: {config.classifier_model}")
-    print(f"  лимит шагов: {config.max_steps} · потолок ${config.cost_ceiling_usd}")
-    print(f"  окно Pro: {config.pro_window_max_runs} запусков / "
+    print(f"  лимит шагов: {config.max_steps} · таймаут {config.task_timeout_seconds}с"
+          f" · потолок ${config.cost_ceiling_usd}")
+    print(f"  окно подписки: {config.pro_window_max_runs} запусков / "
           f"{config.pro_window_hours}ч")
+    print(f"  конфиг: {config.active_path or '(встроенный)'}")
     print(f"  журнал: {config.journal_path}")
     print(f"  папка: {repo_root}")
 

@@ -8,9 +8,24 @@ journal_path = "~/.orchestrator/journal.jsonl"
 budget_path = "~/.orchestrator/budget.json"
 test_cmd = ""
 
-# {model}, {prompt}, {steps} are substituted by runner.py
-opencode_cmd = 'opencode run --format json -m {model} "{prompt}"'
-claude_cmd = 'claude -p "{prompt}" --output-format stream-json --verbose'
+# Pluggable agent CLIs. {model}/{prompt}/{steps} are substituted by runner.py.
+# format: opencode-json | claude-json | text (text = any CLI, no token stats).
+[frameworks.opencode]
+cmd = 'opencode run --format json -m {model} "{prompt}"'
+format = "opencode-json"
+auto = ["--auto"]
+
+[frameworks.claude]
+cmd = 'claude -p "{prompt}" --output-format stream-json --verbose'
+format = "claude-json"
+auto = ["--permission-mode", "acceptEdits"]
+
+# Example: OpenAI Codex CLI (ChatGPT login, no OpenRouter). Adjust to taste and
+# point a level's framework at "codex". {model} is ignored unless you add -m.
+[frameworks.codex]
+cmd = 'codex exec "{prompt}"'
+format = "text"
+auto = ["--dangerously-bypass-approvals-and-sandbox"]
 
 [levels.L0]
 models = ["openrouter/cohere/north-mini-code:free"]
@@ -35,3 +50,4 @@ models = ["claude"]
 price_in = 0.0
 price_out = 0.0
 framework = "claude"
+metered = true
