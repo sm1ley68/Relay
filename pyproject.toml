@@ -3,20 +3,33 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "orchestrator"
+name = "relay-router"
 version = "0.1.0"
 description = "Relay — routes NL coding tasks to the cheapest capable agentic CLI"
+readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+authors = [{ name = "Yarik" }]
+keywords = ["ai", "agent", "cli", "llm", "router", "opencode", "claude",
+            "codex", "openrouter", "coding-agent"]
+# stdlib-only at runtime; pyreadline3 is a Windows-only nicety for REPL history.
+dependencies = ["pyreadline3; sys_platform == 'win32'"]
 license = { file = "LICENSE" }
 classifiers = [
     "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Operating System :: OS Independent",
 ]
 
+[project.urls]
+Homepage = "https://github.com/sm1ley68/Relay"
+Repository = "https://github.com/sm1ley68/Relay"
+Issues = "https://github.com/sm1ley68/Relay/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "build", "twine"]
 
 [project.scripts]
 relay = "orchestrator.cli:main"

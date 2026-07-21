@@ -135,7 +135,52 @@ class ParsedArgs:
     auto: bool = False
 
 
-SUBCOMMANDS = ("run", "rollback", "journal", "stats", "doctor", "models")
+SUBCOMMANDS = ("run", "rollback", "journal", "stats", "doctor", "models", "init")
+
+_CODEX_CONFIG = '''# Relay ladder for a Codex (ChatGPT) user — no OpenRouter.
+max_steps = 40
+task_timeout_seconds = 600
+cost_ceiling_usd = 0.50
+pro_window_hours = 5.0
+pro_window_max_runs = 40
+classifier_model = ""
+journal_path = "~/.orchestrator/journal.jsonl"
+budget_path = "~/.orchestrator/budget.json"
+test_cmd = ""
+
+[frameworks.codex]
+cmd = 'codex exec "{prompt}"'
+format = "text"
+auto = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[levels.L0]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L1]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L2]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+
+[levels.L3]
+models = ["codex"]
+price_in = 0.0
+price_out = 0.0
+framework = "codex"
+metered = true
+'''
 
 
 def parse_args(argv: list[str]) -> ParsedArgs:
@@ -382,6 +427,9 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
     if args.command == "models":
         return _list_models(config)
 
+    if args.command == "init":
+        return _init_wizard()
+
     if args.command == "rollback":
         print("Откат: git reset --hard <checkpoint>. "
               "Последний чекпоинт см. в `git log`.", file=sys.stderr)
@@ -542,6 +590,54 @@ def _doctor(config: Config) -> int:
     else:
         print(_color("\nВсё на месте. Запускай `relay` в проекте.", GREEN))
     return 0 if problems == 0 else 1
+
+
+def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
+    """Interactive setup: pick a provider, save the key/config, run doctor."""
+    input_fn = input_fn or input
+    if getpass_fn is None:
+        import getpass as _gp
+        getpass_fn = _gp.getpass
+    home = Path.home() / ".orchestrator"
+    home.mkdir(parents=True, exist_ok=True)
+
+    print(_color("Relay init — настройка", ACCENT, bold=True))
+    print("  1) OpenRouter — дешёвые модели (opencode) + Claude сверху")
+    print("  2) Codex (ChatGPT) — без OpenRouter")
+    try:
+        choice = input_fn("Провайдер [1/2]: ").strip()
+    except EOFError:
+        print("Неинтерактивный режим. Задай ключ в ~/.orchestrator/.env вручную.",
+              file=sys.stderr)
+        return 1
+
+    if choice == "2":
+        (home / "config.toml").write_text(_CODEX_CONFIG)
+        print(_color("✓ Записал codex-лестницу в ~/.orchestrator/config.toml", GREEN))
+        print(_color("  Не забудь залогиниться: codex login", DIM))
+    else:
+        try:
+            key = getpass_fn("OpenRouter API key (sk-or-...): ").strip()
+        except EOFError:
+            key = ""
+        if key:
+            envf = home / ".env"
+            envf.write_text(f'OPENROUTER_API_KEY="{key}"\n')
+            try:
+                envf.chmod(0o600)
+            except OSError:
+                pass
+            print(_color("✓ Ключ записан в ~/.orchestrator/.env", GREEN))
+        print(_color("  Лестница: L0/L1 free · L2 DeepSeek · L3 Claude "
+                     "(для L3 нужен `claude` login)", DIM))
+        # a stale codex override would shadow the default ladder
+        override = home / "config.toml"
+        if override.exists():
+            print(_color(f"  ⚠ Есть {override} — он переопределяет дефолт. "
+                         "Удали его для стандартной лестницы.", DIM))
+
+    print()
+    return _doctor(load_config())
 
 
 def _list_models(config: Config) -> int:

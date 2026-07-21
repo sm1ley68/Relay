@@ -69,6 +69,23 @@ def test_stats_summarizes_journal(tmp_path, capsys):
     assert "эскалаций 1" in out      # one entry escalated
 
 
+def test_init_wizard_codex_writes_config(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from orchestrator.cli import _init_wizard
+    _init_wizard(input_fn=lambda p="": "2")
+    cfg = tmp_path / ".orchestrator" / "config.toml"
+    assert cfg.exists() and "codex" in cfg.read_text()
+
+
+def test_init_wizard_openrouter_saves_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from orchestrator.cli import _init_wizard
+    _init_wizard(input_fn=lambda p="": "1",
+                 getpass_fn=lambda p="": "sk-or-test123")
+    env = (tmp_path / ".orchestrator" / ".env").read_text()
+    assert 'OPENROUTER_API_KEY="sk-or-test123"' in env
+
+
 def test_list_models_requires_key(monkeypatch, capsys):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     from orchestrator.cli import _list_models

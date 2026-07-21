@@ -13,15 +13,32 @@ Ladder: **L0** North Mini Code (free) · **L1** Laguna M.1 (free) ·
 
 ## Quick start
 
-    git clone <repo> && cd Relay
-    ./setup.sh          # installs relay, checks tools, seeds ~/.orchestrator/.env
-    # put your OpenRouter key in ~/.orchestrator/.env
-    relay doctor        # verify Python / opencode / claude / key are ready
+    git clone https://github.com/sm1ley68/Relay.git && cd Relay
+    pip install -e .          # or: pipx install .   (gives the `relay` command)
+    relay init                # interactive: pick a provider, save your key
+    relay doctor              # verify everything is ready
     cd ~/your-project && relay
+
+`relay init` walks you through setup (OpenRouter, or Codex/ChatGPT with no
+OpenRouter). `./setup.sh` does the same non-interactively.
+
+## Demo
+
+```
+❯ добавь докстринги в utils.py
+→ L0 · cohere · (эвристика: ключевые слова «вниз»)   ← auto-picked, free
+  ⚙ read  ⚙ edit
+Готово. Добавил докстринги к 3 функциям.
+  ⛁ токены: 8.4K in · 120 out · контекст 9.5K · $0.0000
+❯ /undo          # roll back the last task
+❯ /stats         # tasks per level, cost, escalation rate
+```
+
+_(A gif/asciinema recording goes here — `asciinema rec` then embed the SVG.)_
 
 ## Install
 
-    pip install -e .
+    pip install -e .          # from a clone; `pipx install .` also works
 
 Requires: Python 3.13, `opencode` (`npm i -g opencode-ai`) and `claude` on PATH,
 and an OpenRouter API key.
