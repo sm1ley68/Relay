@@ -19,7 +19,10 @@ test_cmd = ""
 [frameworks.codex]
 cmd = 'codex exec "{prompt}"'
 format = "text"                # any CLI; live output, no token stats
-auto = ["--dangerously-bypass-approvals-and-sandbox"]
+# Safe default: no sandbox bypass — /auto uses Codex's own approval flow.
+# Advanced (understand the risk): "--full-auto" (sandboxed) or
+# "--dangerously-bypass-approvals-and-sandbox" (no sandbox).
+auto = []
 
 [levels.L0]
 models = ["codex"]

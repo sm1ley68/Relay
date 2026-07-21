@@ -25,7 +25,9 @@ auto = ["--permission-mode", "acceptEdits"]
 [frameworks.codex]
 cmd = 'codex exec "{prompt}"'
 format = "text"
-auto = ["--dangerously-bypass-approvals-and-sandbox"]
+# Safe default: no sandbox bypass. Advanced users may add "--full-auto"
+# (sandboxed) or, only if they mean it, "--dangerously-bypass-approvals-and-sandbox".
+auto = []
 
 # Free tiers keep several fallbacks: OpenRouter rotates/rate-limits free models,
 # so relay rotates to the next one on a 429 / model-unavailable error.

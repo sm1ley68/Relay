@@ -82,8 +82,10 @@ def test_init_wizard_openrouter_saves_key(tmp_path, monkeypatch):
     from orchestrator.cli import _init_wizard
     _init_wizard(input_fn=lambda p="": "1",
                  getpass_fn=lambda p="": "sk-or-test123")
-    env = (tmp_path / ".orchestrator" / ".env").read_text()
-    assert 'OPENROUTER_API_KEY="sk-or-test123"' in env
+    envf = tmp_path / ".orchestrator" / ".env"
+    assert 'OPENROUTER_API_KEY="sk-or-test123"' in envf.read_text()
+    # secret file must not be group/world readable
+    assert (envf.stat().st_mode & 0o077) == 0
 
 
 def test_list_models_requires_key(monkeypatch, capsys):

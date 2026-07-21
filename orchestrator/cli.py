@@ -151,7 +151,10 @@ test_cmd = ""
 [frameworks.codex]
 cmd = 'codex exec "{prompt}"'
 format = "text"
-auto = ["--dangerously-bypass-approvals-and-sandbox"]
+# Safe default: no sandbox bypass. /auto then relies on Codex's own approval flow.
+# Advanced (understand the risk): add "--full-auto" (sandboxed) or, only if you
+# really mean it, "--dangerously-bypass-approvals-and-sandbox".
+auto = []
 
 [levels.L0]
 models = ["codex"]
@@ -592,6 +595,15 @@ def _doctor(config: Config) -> int:
     return 0 if problems == 0 else 1
 
 
+def _write_secret(path: Path, content: str) -> None:
+    """Write a secret file atomically with 0o600 (no world/group read window)."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
+
+
 def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
     """Interactive setup: pick a provider, save the key/config, run doctor."""
     input_fn = input_fn or input
@@ -600,6 +612,10 @@ def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
         getpass_fn = _gp.getpass
     home = Path.home() / ".orchestrator"
     home.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(home, 0o700)  # keep the secrets dir private
+    except OSError:
+        pass
 
     print(_color("Relay init — настройка", ACCENT, bold=True))
     print("  1) OpenRouter — дешёвые модели (opencode) + Claude сверху")
@@ -621,13 +637,8 @@ def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
         except EOFError:
             key = ""
         if key:
-            envf = home / ".env"
-            envf.write_text(f'OPENROUTER_API_KEY="{key}"\n')
-            try:
-                envf.chmod(0o600)
-            except OSError:
-                pass
-            print(_color("✓ Ключ записан в ~/.orchestrator/.env", GREEN))
+            _write_secret(home / ".env", f'OPENROUTER_API_KEY="{key}"\n')
+            print(_color("✓ Ключ записан в ~/.orchestrator/.env (0600)", GREEN))
         print(_color("  Лестница: L0/L1 free · L2 DeepSeek · L3 Claude "
                      "(для L3 нужен `claude` login)", DIM))
         # a stale codex override would shadow the default ladder
