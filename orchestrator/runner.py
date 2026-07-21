@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 
 from .config import Config
+from .i18n import t
 from .router import RouteDecision
 
 
@@ -133,8 +134,10 @@ def _consume_claude_json(lines, write) -> tuple[str, dict]:
 def build_command(template: str, model: str, prompt: str, steps: int) -> list[str]:
     if model.startswith("-") or prompt.startswith("-"):
         raise ValueError(
-            "Значения model/prompt не могут начинаться с '-' "
-            "(защита от подмены флагов каркаса)."
+            t("model/prompt values must not start with '-' "
+              "(protection against framework flag smuggling).",
+              "Значения model/prompt не могут начинаться с '-' "
+              "(защита от подмены флагов каркаса).")
         )
     subst = {"{model}": model, "{prompt}": prompt, "{steps}": str(steps)}
     argv = []
@@ -274,9 +277,11 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
                   auto: bool = False, _runner=None) -> RunResult:
     fw = config.frameworks.get(decision.framework)
     if fw is None:
-        raise FrameworkNotFound(
+        raise FrameworkNotFound(t(
+            f"Framework '{decision.framework}' is not defined in config.toml "
+            f"(section [frameworks.{decision.framework}]).",
             f"Каркас '{decision.framework}' не описан в config.toml "
-            f"(секция [frameworks.{decision.framework}]).")
+            f"(секция [frameworks.{decision.framework}])."))
     template = fw.cmd
     kind = _JSON_KINDS.get(fw.format)  # None => plain "text" streaming
 
@@ -318,7 +323,8 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
             model_err = _classify_model_error(out)
             if model_err:
                 nxt = models[i + 1]
-                print(f"  ↻ модель {model} недоступна ({model_err}) → пробую {nxt}",
+                print(t(f"  ↻ model {model} unavailable ({model_err}) → trying {nxt}",
+                        f"  ↻ модель {model} недоступна ({model_err}) → пробую {nxt}"),
                       file=sys.stderr)
                 if model_err == "rate-limit":
                     time.sleep(_RATE_LIMIT_BACKOFF)
@@ -328,7 +334,8 @@ def run_framework(decision: RouteDecision, prompt: str, config: Config,
                          step_limit_hit=step_hit, usage=usage,
                          cost_limit_hit=cost_hit, timeout_hit=timeout_hit)
 
-    raise FrameworkNotFound(
+    raise FrameworkNotFound(t(
+        f"Framework binary '{decision.framework}' not found. "
+        f"Install it or fix the command in config.toml. ({last_error})",
         f"Не найден бинарь каркаса '{decision.framework}'. "
-        f"Установите его или поправьте команду в config.toml. ({last_error})"
-    )
+        f"Установите его или поправьте команду в config.toml. ({last_error})"))

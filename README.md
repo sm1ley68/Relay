@@ -161,10 +161,11 @@ limits itself by watching the framework's json stream and terminating the proces
 Escalation triggers: step limit, nonzero exit, repeated-output loop, and an
 optional failing `--test-cmd`. Real per-task cost is recorded in the journal.
 
-## Note on language
+## Language
 
-Relay's UI (banner, `/help`, status messages) is currently in Russian; the code,
-config keys and this README are in English. Tasks can be written in any language.
+The UI defaults to **English**. Switch to Russian with `/lang ru` in the REPL,
+`RELAY_LANG=ru`, or `lang = "ru"` in `config.toml` (`/lang` with no arg toggles).
+Tasks can be written in any language.
 
 ## License
 

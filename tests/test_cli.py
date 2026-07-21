@@ -15,9 +15,11 @@ from orchestrator.runner import RunResult
 
 
 def test_banner_renders_box_and_context(tmp_path):
+    from orchestrator.i18n import set_lang
+    set_lang("en")
     out = _banner(tmp_path, load_config())
     assert "Relay" in out
-    assert "Привет" in out
+    assert "Hi," in out                         # English greeting by default
     assert "╭" in out and "╯" in out  # bordered box
     # every boxed row lines up to the same visual width
     rows = [ln for ln in out.splitlines() if ln.startswith("│")]
@@ -56,6 +58,8 @@ def test_stats_summarizes_journal(tmp_path, capsys):
     import dataclasses
     from orchestrator import journal as J
     from orchestrator.cli import _print_stats
+    from orchestrator.i18n import set_lang
+    set_lang("en")
     p = tmp_path / "j.jsonl"
     J.append(J.new_entry("t1", "L0", "trivial", "opencode", "m",
                          "success", 0, 0.0, []), p)
@@ -64,9 +68,9 @@ def test_stats_summarizes_journal(tmp_path, capsys):
     cfg = dataclasses.replace(load_config(), journal_path=str(p))
     _print_stats(cfg)
     out = capsys.readouterr().out
-    assert "Задач: 2" in out
+    assert "Tasks: 2" in out
     assert "$0.0050" in out          # total cost
-    assert "эскалаций 1" in out      # one entry escalated
+    assert "escalations 1" in out    # one entry escalated
 
 
 def test_init_wizard_codex_writes_config(tmp_path, monkeypatch, capsys):
@@ -132,6 +136,8 @@ def test_undo_resets_to_last_checkpoint(tmp_path):
 
 def test_repl_command_exit_help_config_unknown(tmp_path, capsys):
     from orchestrator.cli import _repl_command
+    from orchestrator.i18n import set_lang
+    set_lang("en")
     cfg = load_config()
     assert _repl_command("/exit", cfg, tmp_path) == "exit"
     assert _repl_command("/quit", cfg, tmp_path) == "exit"
@@ -139,7 +145,16 @@ def test_repl_command_exit_help_config_unknown(tmp_path, capsys):
     assert _repl_command("/config", cfg, tmp_path) == ""
     assert _repl_command("/nope", cfg, tmp_path) is None
     out = capsys.readouterr().out
-    assert "Команды Relay" in out and "Лестница моделей" in out
+    assert "Relay commands" in out and "Model ladder" in out
+
+
+def test_lang_switch_changes_ui():
+    from orchestrator.cli import _explain_basis
+    from orchestrator.i18n import set_lang
+    set_lang("ru")
+    assert _explain_basis("explicit") == "выбрано вручную"
+    set_lang("en")
+    assert _explain_basis("explicit") == "forced"
 
 
 def test_session_commands_set_defaults():
@@ -192,10 +207,12 @@ def test_interactive_handles_slash_command_without_dispatch(tmp_path):
 
 
 def test_explain_basis_readable():
-    assert _explain_basis("explicit") == "выбрано вручную"
+    from orchestrator.i18n import set_lang
+    set_lang("en")
+    assert _explain_basis("explicit") == "forced"
     assert "3/5" in _explain_basis("llm:3")
-    assert "вверх" in _explain_basis("heuristic:up-keyword")
-    assert "вниз" in _explain_basis("heuristic:down-keyword")
+    assert "up" in _explain_basis("heuristic:up-keyword")
+    assert "down" in _explain_basis("heuristic:down-keyword")
     assert "2" in _explain_basis("heuristic:files:2")
     assert _explain_basis("something-new") == "something-new"  # fallback
 

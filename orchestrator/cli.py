@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import budget, escalate, journal, router, runner
 from .config import Config, LADDER, load_config, load_env_file
+from .i18n import t, set_lang, current_lang
 
 PREFIXES = {f"/l{i}": lvl for i, lvl in enumerate(LADDER)}
 
@@ -74,11 +75,13 @@ def _banner(repo_root: Path, config: Config) -> str:
                         for lvl in LADDER)
 
     tips = [
-        _color("Подсказки", DIM),
+        _color(t("Tips", "Подсказки"), DIM),
         _color("─────────────────────────────", DIM),
-        "• просто задача → авто-выбор уровня",
-        f"• /l0 .. /l{len(LADDER) - 1} — форсировать уровень",
-        "• --dry-run — показать, не запуская",
+        t("• just type a task → auto-picked level",
+          "• просто задача → авто-выбор уровня"),
+        t(f"• /l0 .. /l{len(LADDER) - 1} — force a level",
+          f"• /l0 .. /l{len(LADDER) - 1} — форсировать уровень"),
+        t("• --dry-run — show, don't run", "• --dry-run — показать, не запуская"),
         "• /help · /journal · /config · exit",
     ]
 
@@ -95,7 +98,8 @@ def _banner(repo_root: Path, config: Config) -> str:
         rows.append(f"  {left}   {tip}")
     rows += [
         "",
-        f"  Привет, {user}! Relay готов — опиши задачу, модель выберется сама.",
+        "  " + t(f"Hi, {user}! Relay is ready — describe a task, it picks the model.",
+                 f"Привет, {user}! Relay готов — опиши задачу, модель выберется сама."),
         "  " + _color(ladder, DIM),
         "  " + _color(cwd, DIM),
         "",
@@ -234,13 +238,17 @@ def checkpoint_commit(root: Path, *, _runner=None) -> str:
     add_proc = run(["git", "add", "-A"])
     if add_proc.returncode != 0:
         raise RuntimeError(
-            "Не удалось создать чекпоинт-коммит (проверьте git user.name/email)."
+            t("Failed to create the checkpoint commit "
+              "(check git user.name/email).",
+              "Не удалось создать чекпоинт-коммит (проверьте git user.name/email).")
         )
     commit_proc = run(["git", "commit", "-m", "orchestrator: checkpoint",
                        "--allow-empty"])
     if commit_proc.returncode != 0:
         raise RuntimeError(
-            "Не удалось создать чекпоинт-коммит (проверьте git user.name/email)."
+            t("Failed to create the checkpoint commit "
+              "(check git user.name/email).",
+              "Не удалось создать чекпоинт-коммит (проверьте git user.name/email).")
         )
     proc = run(["git", "rev-parse", "HEAD"])
     return proc.stdout.strip()
@@ -266,10 +274,11 @@ def _usage_line(usage: dict) -> str:
     reasoning = usage.get("reasoning", 0)
     ctx = usage.get("context", 0)
     cost = usage.get("cost", 0.0)
-    parts = [f"⛁ токены: {_fmt_k(inp)} in · {_fmt_k(out)} out"]
+    parts = [t(f"⛁ tokens: {_fmt_k(inp)} in · {_fmt_k(out)} out",
+               f"⛁ токены: {_fmt_k(inp)} in · {_fmt_k(out)} out")]
     if reasoning:
         parts.append(f"{_fmt_k(reasoning)} reasoning")
-    parts.append(f"контекст {_fmt_k(ctx)}")
+    parts.append(t(f"context {_fmt_k(ctx)}", f"контекст {_fmt_k(ctx)}"))
     parts.append(f"${cost:.4f}")
     return _color("  " + " · ".join(parts), DIM)
 
@@ -284,31 +293,39 @@ def _attempt_note(level: str, reason: str, stdout: str, *, tail: int = 20) -> st
     lines = [ln for ln in (stdout or "").splitlines() if ln.strip()]
     if lines:
         body = "\n".join("    " + ln for ln in lines[-tail:])
-        note += f"\n  вывод (последние строки):\n{body}"
+        note += "\n  " + t("output (last lines):", "вывод (последние строки):") \
+            + f"\n{body}"
     return note
 
 
 def _explain_basis(basis: str) -> str:
     """Human-readable reason for why a level was chosen (for the routing line)."""
     if basis == "explicit":
-        return "выбрано вручную"
+        return t("forced", "выбрано вручную")
     if basis == "llm-unavailable":
-        return "классификатор недоступен, L2 по умолчанию"
+        return t("classifier unavailable, default L2",
+                 "классификатор недоступен, L2 по умолчанию")
     if basis == "no-classifier":
-        return "без классификатора (нет ключа), L2 по умолчанию"
+        return t("no classifier (no key), default L2",
+                 "без классификатора (нет ключа), L2 по умолчанию")
     if basis.startswith("llm:"):
-        return f"классификатор LLM: сложность {basis.split(':', 1)[1]}/5"
+        n = basis.split(":", 1)[1]
+        return t(f"LLM classifier: difficulty {n}/5",
+                 f"классификатор LLM: сложность {n}/5")
     if basis.startswith("heuristic:"):
         reason = basis.split(":", 1)[1]
         if reason == "failed-low":
-            return "эвристика: провалилось на нижнем уровне"
+            return t("heuristic: failed at a lower level",
+                     "эвристика: провалилось на нижнем уровне")
         if reason == "up-keyword":
-            return "эвристика: ключевые слова «вверх»"
+            return t("heuristic: 'up' keywords", "эвристика: ключевые слова «вверх»")
         if reason == "down-keyword":
-            return "эвристика: ключевые слова «вниз»"
+            return t("heuristic: 'down' keywords", "эвристика: ключевые слова «вниз»")
         if reason.startswith("up-files:") or reason.startswith("files:"):
-            return f"эвристика: затрагивает файлов — {reason.split(':', 1)[1]}"
-        return f"эвристика: {reason}"
+            n = reason.split(":", 1)[1]
+            return t(f"heuristic: touches {n} files",
+                     f"эвристика: затрагивает файлов — {n}")
+        return t(f"heuristic: {reason}", f"эвристика: {reason}")
     return basis
 
 
@@ -348,8 +365,11 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
 
         metered = config.levels[decision.level].metered
         if metered and not args.dry_run and not pro.can_run():
-            print(f"Окно подписки ({decision.framework}) на исходе — поставьте "
-                  "задачу в очередь или подождите сброса лимита.", file=sys.stderr)
+            print(t(f"Subscription window ({decision.framework}) is running out "
+                    "— queue the task or wait for the limit to reset.",
+                    f"Окно подписки ({decision.framework}) на исходе — поставьте "
+                    "задачу в очередь или подождите сброса лимита."),
+                  file=sys.stderr)
             entry = journal.new_entry(args.task, decision.level, decision.basis,
                                       decision.framework, "", "pro-exhausted",
                                       0, 0.0, escalations)
@@ -372,8 +392,10 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
             print(_usage_line(result.usage))
 
         if result.cost_limit_hit:
-            print(f"⛔ Превышен потолок стоимости ${config.cost_ceiling_usd} — "
-                  "задача прервана (эскалации нет, чтобы не тратить больше).",
+            print(t(f"⛔ Cost ceiling ${config.cost_ceiling_usd} exceeded — task "
+                    "stopped (no escalation, to avoid spending more).",
+                    f"⛔ Превышен потолок стоимости ${config.cost_ceiling_usd} — "
+                    "задача прервана (эскалации нет, чтобы не тратить больше)."),
                   file=sys.stderr)
             entry = journal.new_entry(args.task, decision.level, decision.basis,
                                       decision.framework, result.model,
@@ -397,7 +419,8 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                                       decision.framework, result.model,
                                       f"failed:{reason}", 0, 0.0, escalations)
             journal_append(entry, Path(config.journal_path).expanduser())
-            print(f"Провал на верхнем уровне ({decision.level}): {reason}",
+            print(t(f"Failed at the top level ({decision.level}): {reason}",
+                    f"Провал на верхнем уровне ({decision.level}): {reason}"),
                   file=sys.stderr)
             return 1
 
@@ -434,18 +457,23 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
         return _init_wizard()
 
     if args.command == "rollback":
-        print("Откат: git reset --hard <checkpoint>. "
-              "Последний чекпоинт см. в `git log`.", file=sys.stderr)
+        print(t("Rollback: git reset --hard <checkpoint>. "
+                "See the last checkpoint in `git log` (or use /undo in the REPL).",
+                "Откат: git reset --hard <checkpoint>. "
+                "Последний чекпоинт см. в `git log`."), file=sys.stderr)
         return 0
 
     if not ensure_git_repo(repo_root) and not args.no_commit_guard:
-        print("Не git-репозиторий — агент не запущен (нужен чекпоинт для отката). "
-              "Перейди в проект (cd ~/твой-проект), сделай `git init`, "
-              "или добавь --no-commit-guard.", file=sys.stderr)
+        print(t("Not a git repo — agent not run (a checkpoint is needed for undo). "
+                "cd into a project, run `git init`, or add --no-commit-guard.",
+                "Не git-репозиторий — агент не запущен (нужен чекпоинт для отката). "
+                "Перейди в проект (cd ~/твой-проект), сделай `git init`, "
+                "или добавь --no-commit-guard."), file=sys.stderr)
         return 3
 
     if not args.task:
-        print("Пустая задача. Пример: relay /l2 почини авторизацию",
+        print(t("Empty task. Example: relay /l2 fix the auth check",
+                "Пустая задача. Пример: relay /l2 почини авторизацию"),
               file=sys.stderr)
         return 3
 
@@ -460,54 +488,70 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
 
 
 def _print_help(config: Config) -> None:
-    print(_color("Команды Relay:", ACCENT, bold=True))
+    print(_color(t("Relay commands:", "Команды Relay:"), ACCENT, bold=True))
     rows = [
-        ("<задача>", "описать задачу — уровень выберется сам (флаги не нужны)"),
-        ("/l0 .. /l3 <задача>", "форсировать уровень"),
-        ("/dry [on|off]", "режим «показать, не запуская» на всю сессию"),
-        ("/auto [on|off]", "агент правит файлы без запроса разрешений"),
-        ("/steps N", "лимит шагов агента на сессию (/steps off — сброс)"),
-        ("/test <cmd>", "прогонять тест после задачи (/test off — выкл)"),
-        ("/guard [on|off]", "чекпоинт-коммит перед агентом (по умолч. вкл)"),
-        ("/undo", "откатить изменения последней задачи"),
-        ("/journal", "журнал решений (уровень, исход, стоимость)"),
-        ("/stats", "аналитика: задачи по уровням, стоимость, эскалации"),
-        ("/config", "лестница моделей и настройки"),
-        ("/clear", "очистить экран"),
-        ("/help", "эта справка"),
-        ("/exit, exit, Ctrl-D", "выход"),
+        ("<task>", t("describe a task — level is auto-picked (no flags needed)",
+                     "описать задачу — уровень выберется сам (флаги не нужны)")),
+        ("/l0 .. /l3 <task>", t("force a level", "форсировать уровень")),
+        ("/dry [on|off]", t("show-don't-run mode for the session",
+                            "режим «показать, не запуская» на всю сессию")),
+        ("/auto [on|off]", t("agent edits files without asking permission",
+                             "агент правит файлы без запроса разрешений")),
+        ("/steps N", t("cap agent steps for the session (/steps off — reset)",
+                       "лимит шагов агента на сессию (/steps off — сброс)")),
+        ("/test <cmd>", t("run a test after each task (/test off — disable)",
+                          "прогонять тест после задачи (/test off — выкл)")),
+        ("/guard [on|off]", t("checkpoint commit before the agent (default on)",
+                              "чекпоинт-коммит перед агентом (по умолч. вкл)")),
+        ("/undo", t("roll back the last task's changes",
+                    "откатить изменения последней задачи")),
+        ("/journal", t("decision log (level, outcome, cost)",
+                       "журнал решений (уровень, исход, стоимость)")),
+        ("/stats", t("analytics: tasks per level, cost, escalations",
+                     "аналитика: задачи по уровням, стоимость, эскалации")),
+        ("/config", t("model ladder and settings", "лестница моделей и настройки")),
+        ("/clear", t("clear the screen", "очистить экран")),
+        ("/lang [en|ru]", t("switch UI language", "переключить язык интерфейса")),
+        ("/help", t("this help", "эта справка")),
+        ("/exit, exit, Ctrl-D", t("quit", "выход")),
     ]
     for cmd, desc in rows:
         print(f"  {_color(cmd, ACCENT)}")
         print(f"      {_color(desc, DIM)}")
-    print(_color("  Режимы сессии видны в приглашении: [dry steps=10 test] ❯", DIM))
-    print(_color("  Уровни: L0/L1 бесплатно · L2 дёшево · L3 Claude (подписка)",
-                 DIM))
+    print(_color(t("  Session modes show in the prompt: [dry steps=10 test] ❯",
+                   "  Режимы сессии видны в приглашении: [dry steps=10 test] ❯"), DIM))
 
 
 def _print_config(config: Config, repo_root: Path) -> None:
-    print(_color("Лестница моделей:", ACCENT, bold=True))
+    print(_color(t("Model ladder:", "Лестница моделей:"), ACCENT, bold=True))
     for lvl in LADDER:
         L = config.levels[lvl]
         if L.framework == "claude":
-            price = "подписка Pro"
+            price = t("Pro subscription", "подписка Pro")
         elif L.price_in == 0 and L.price_out == 0:
-            price = "бесплатно"
+            price = t("free", "бесплатно")
         else:
-            price = f"${L.price_in}/${L.price_out} за 1M"
+            price = f"${L.price_in}/${L.price_out} " + t("per 1M", "за 1M")
         print(f"  {_color(lvl, ACCENT)} · {L.models[0]} · {L.framework} · {price}")
-    print(_color("Каркасы:", ACCENT, bold=True))
+    print(_color(t("Frameworks:", "Каркасы:"), ACCENT, bold=True))
     for name, fw in config.frameworks.items():
         print(f"  {name} · {fw.format} · {fw.cmd}")
-    print(_color("Настройки:", ACCENT, bold=True))
-    print(f"  классификатор: {config.classifier_model}")
-    print(f"  лимит шагов: {config.max_steps} · таймаут {config.task_timeout_seconds}с"
-          f" · потолок ${config.cost_ceiling_usd}")
-    print(f"  окно подписки: {config.pro_window_max_runs} запусков / "
-          f"{config.pro_window_hours}ч")
-    print(f"  конфиг: {config.active_path or '(встроенный)'}")
-    print(f"  журнал: {config.journal_path}")
-    print(f"  папка: {repo_root}")
+    print(_color(t("Settings:", "Настройки:"), ACCENT, bold=True))
+    print("  " + t("classifier", "классификатор") + f": {config.classifier_model}")
+    print("  " + t(
+        f"step limit: {config.max_steps} · timeout {config.task_timeout_seconds}s"
+        f" · ceiling ${config.cost_ceiling_usd}",
+        f"лимит шагов: {config.max_steps} · таймаут {config.task_timeout_seconds}с"
+        f" · потолок ${config.cost_ceiling_usd}"))
+    print("  " + t(
+        f"subscription window: {config.pro_window_max_runs} runs / "
+        f"{config.pro_window_hours}h",
+        f"окно подписки: {config.pro_window_max_runs} запусков / "
+        f"{config.pro_window_hours}ч"))
+    print("  " + t("config", "конфиг") +
+          f": {config.active_path or t('(built-in)', '(встроенный)')}")
+    print("  " + t("journal", "журнал") + f": {config.journal_path}")
+    print("  " + t("dir", "папка") + f": {repo_root}")
 
 
 def _last_checkpoint(repo_root: Path) -> str | None:
@@ -521,7 +565,8 @@ def _last_checkpoint(repo_root: Path) -> str | None:
 def _print_stats(config: Config) -> None:
     entries = journal.read_all(Path(config.journal_path).expanduser())
     if not entries:
-        print(_color("Журнал пуст — ещё не было задач.", DIM))
+        print(_color(t("Journal is empty — no tasks yet.",
+                       "Журнал пуст — ещё не было задач."), DIM))
         return
     total = len(entries)
     total_cost = sum(e.cost_usd for e in entries)
@@ -533,17 +578,21 @@ def _print_stats(config: Config) -> None:
         key = e.outcome.split(":")[0]
         by_outcome[key] = by_outcome.get(key, 0) + 1
 
-    print(_color(f"Задач: {total} · суммарно ${total_cost:.4f} · "
-                 f"в среднем ${total_cost / total:.4f} · "
-                 f"эскалаций {escalated} ({escalated * 100 // total}%)",
-                 ACCENT, bold=True))
-    print(_color("По уровням:", DIM))
+    print(_color(t(
+        f"Tasks: {total} · total ${total_cost:.4f} · "
+        f"avg ${total_cost / total:.4f} · "
+        f"escalations {escalated} ({escalated * 100 // total}%)",
+        f"Задач: {total} · суммарно ${total_cost:.4f} · "
+        f"в среднем ${total_cost / total:.4f} · "
+        f"эскалаций {escalated} ({escalated * 100 // total}%)"),
+        ACCENT, bold=True))
+    print(_color(t("By level:", "По уровням:"), DIM))
     for lvl in LADDER:
         n = by_level.get(lvl, 0)
         if n:
             bar = "█" * min(30, n)
             print(f"  {_color(lvl, _level_rgb(config, lvl))} {n:>4}  {bar}")
-    print(_color("Исходы:", DIM))
+    print(_color(t("Outcomes:", "Исходы:"), DIM))
     for outcome, n in sorted(by_outcome.items(), key=lambda x: -x[1]):
         print(f"  {outcome:14} {n}")
 
@@ -553,13 +602,16 @@ def _doctor(config: Config) -> int:
     import shutil
     ok = _color("✓", GREEN)
     bad = _color("✗", (220, 100, 100))
-    print(_color("Relay doctor — проверка окружения:", ACCENT, bold=True))
-    print(_color(f"  конфиг: {config.active_path or '(встроенный)'}", DIM))
+    print(_color(t("Relay doctor — environment check:",
+                   "Relay doctor — проверка окружения:"), ACCENT, bold=True))
+    print(_color("  " + t("config", "конфиг") +
+                 f": {config.active_path or t('(built-in)', '(встроенный)')}", DIM))
     problems = 0
 
     py_ok = sys.version_info >= (3, 13)
     print(f"  {ok if py_ok else bad} Python {sys.version_info.major}."
-          f"{sys.version_info.minor}" + ("" if py_ok else "  (нужен 3.13+)"))
+          f"{sys.version_info.minor}" +
+          ("" if py_ok else t("  (need 3.13+)", "  (нужен 3.13+)")))
     problems += not py_ok
 
     print(f"  {ok if shutil.which('git') else bad} git")
@@ -572,10 +624,14 @@ def _doctor(config: Config) -> int:
         binary = shlex.split(fw.cmd)[0] if fw else name
         found = shutil.which(binary)
         hint = {"opencode": "npm i -g opencode-ai",
-                "claude": "поставь Claude Code и залогинься",
-                "codex": "поставь Codex CLI и `codex login`"}.get(name, "поставь его")
+                "claude": t("install Claude Code and log in",
+                            "поставь Claude Code и залогинься"),
+                "codex": t("install Codex CLI and `codex login`",
+                           "поставь Codex CLI и `codex login`")}.get(
+                    name, t("install it", "поставь его"))
         print(f"  {ok if found else bad} {binary}" +
-              (f"  {found}" if found else f"  — не найден: {hint}"))
+              (f"  {found}" if found
+               else "  — " + t("not found", "не найден") + f": {hint}"))
         problems += not found
 
     # OpenRouter key only if the ladder or classifier actually needs it.
@@ -585,13 +641,16 @@ def _doctor(config: Config) -> int:
     if needs_or:
         key = bool(os.environ.get("OPENROUTER_API_KEY"))
         print(f"  {ok if key else bad} OPENROUTER_API_KEY" +
-              ("" if key else "  — задай в ~/.orchestrator/.env"))
+              ("" if key else t("  — set it in ~/.orchestrator/.env",
+                                "  — задай в ~/.orchestrator/.env")))
         problems += not key
 
     if problems:
-        print(_color(f"\nНе хватает {problems} — см. подсказки выше.", DIM))
+        print(_color(t(f"\nMissing {problems} — see the hints above.",
+                       f"\nНе хватает {problems} — см. подсказки выше."), DIM))
     else:
-        print(_color("\nВсё на месте. Запускай `relay` в проекте.", GREEN))
+        print(_color(t("\nAll set. Run `relay` in a project.",
+                       "\nВсё на месте. Запускай `relay` в проекте."), GREEN))
     return 0 if problems == 0 else 1
 
 
@@ -617,20 +676,24 @@ def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
     except OSError:
         pass
 
-    print(_color("Relay init — настройка", ACCENT, bold=True))
-    print("  1) OpenRouter — дешёвые модели (opencode) + Claude сверху")
-    print("  2) Codex (ChatGPT) — без OpenRouter")
+    print(_color(t("Relay init — setup", "Relay init — настройка"), ACCENT, bold=True))
+    print("  1) OpenRouter — " + t("cheap models (opencode) + Claude on top",
+                                    "дешёвые модели (opencode) + Claude сверху"))
+    print("  2) Codex (ChatGPT) — " + t("no OpenRouter", "без OpenRouter"))
     try:
-        choice = input_fn("Провайдер [1/2]: ").strip()
+        choice = input_fn(t("Provider [1/2]: ", "Провайдер [1/2]: ")).strip()
     except EOFError:
-        print("Неинтерактивный режим. Задай ключ в ~/.orchestrator/.env вручную.",
+        print(t("Non-interactive. Set the key in ~/.orchestrator/.env manually.",
+                "Неинтерактивный режим. Задай ключ в ~/.orchestrator/.env вручную."),
               file=sys.stderr)
         return 1
 
     if choice == "2":
         (home / "config.toml").write_text(_CODEX_CONFIG)
-        print(_color("✓ Записал codex-лестницу в ~/.orchestrator/config.toml", GREEN))
-        print(_color("  Не забудь залогиниться: codex login", DIM))
+        print(_color(t("✓ Wrote a codex ladder to ~/.orchestrator/config.toml",
+                       "✓ Записал codex-лестницу в ~/.orchestrator/config.toml"), GREEN))
+        print(_color(t("  Don't forget to log in: codex login",
+                       "  Не забудь залогиниться: codex login"), DIM))
     else:
         try:
             key = getpass_fn("OpenRouter API key (sk-or-...): ").strip()
@@ -638,14 +701,19 @@ def _init_wizard(*, input_fn=None, getpass_fn=None) -> int:
             key = ""
         if key:
             _write_secret(home / ".env", f'OPENROUTER_API_KEY="{key}"\n')
-            print(_color("✓ Ключ записан в ~/.orchestrator/.env (0600)", GREEN))
-        print(_color("  Лестница: L0/L1 free · L2 DeepSeek · L3 Claude "
-                     "(для L3 нужен `claude` login)", DIM))
+            print(_color(t("✓ Key saved to ~/.orchestrator/.env (0600)",
+                           "✓ Ключ записан в ~/.orchestrator/.env (0600)"), GREEN))
+        print(_color(t("  Ladder: L0/L1 free · L2 DeepSeek · L3 Claude "
+                       "(L3 needs `claude` login)",
+                       "  Лестница: L0/L1 free · L2 DeepSeek · L3 Claude "
+                       "(для L3 нужен `claude` login)"), DIM))
         # a stale codex override would shadow the default ladder
         override = home / "config.toml"
         if override.exists():
-            print(_color(f"  ⚠ Есть {override} — он переопределяет дефолт. "
-                         "Удали его для стандартной лестницы.", DIM))
+            print(_color(t(f"  ⚠ {override} exists — it overrides the default. "
+                           "Delete it for the standard ladder.",
+                           f"  ⚠ Есть {override} — он переопределяет дефолт. "
+                           "Удали его для стандартной лестницы."), DIM))
 
     print()
     return _doctor(load_config())
@@ -657,8 +725,10 @@ def _list_models(config: Config) -> int:
     import json as _json
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
-        print("Нужен OPENROUTER_API_KEY (в ~/.orchestrator/.env), чтобы получить "
-              "список моделей OpenRouter.", file=sys.stderr)
+        print(t("OPENROUTER_API_KEY (in ~/.orchestrator/.env) is required to list "
+                "OpenRouter models.",
+                "Нужен OPENROUTER_API_KEY (в ~/.orchestrator/.env), чтобы получить "
+                "список моделей OpenRouter."), file=sys.stderr)
         return 1
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/models",
@@ -667,7 +737,8 @@ def _list_models(config: Config) -> int:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = _json.loads(resp.read())
     except Exception as exc:
-        print(f"Не удалось получить модели: {exc}", file=sys.stderr)
+        print(t(f"Failed to fetch models: {exc}",
+                f"Не удалось получить модели: {exc}"), file=sys.stderr)
         return 1
 
     free, cheap = [], []
@@ -683,14 +754,19 @@ def _list_models(config: Config) -> int:
     free.sort(reverse=True)
     cheap.sort()
 
-    print(_color(f"Бесплатные модели ({len(free)}) — для L0/L1:", ACCENT, bold=True))
+    print(_color(t(f"Free models ({len(free)}) — for L0/L1:",
+                   f"Бесплатные модели ({len(free)}) — для L0/L1:"), ACCENT, bold=True))
     for ctx, ident in free:
         print(f"  openrouter/{ident}   ctx={ctx}")
-    print(_color("\nДешёвые (≤ $1/1M вход) — для L2:", ACCENT, bold=True))
+    print(_color(t("\nCheap (≤ $1/1M in) — for L2:",
+                   "\nДешёвые (≤ $1/1M вход) — для L2:"), ACCENT, bold=True))
     for pin, pout, ident in cheap[:15]:
         print(f"  openrouter/{ident}   ${pin:.2f}/${pout:.2f}")
-    print(_color("\nВставь нужные в models=[...] в ~/.orchestrator/config.toml "
-                 "(с префиксом openrouter/). Relay сам ротирует список при 429.",
+    print(_color(t("\nPut the ones you want in models=[...] in "
+                   "~/.orchestrator/config.toml (with the openrouter/ prefix). "
+                   "Relay rotates the list on a 429.",
+                   "\nВставь нужные в models=[...] в ~/.orchestrator/config.toml "
+                   "(с префиксом openrouter/). Relay сам ротирует список при 429."),
                  DIM))
     return 0
 
@@ -700,14 +776,22 @@ def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
     cmd = line.split()[0].lower()
     if cmd in ("/exit", "/quit"):
         return "exit"
+    if cmd == "/lang":
+        arg = line.split()[1].lower() if len(line.split()) > 1 else ""
+        set_lang(arg or ("ru" if current_lang() == "en" else "en"))
+        print(_color(t(f"language: {current_lang()}", f"язык: {current_lang()}"), DIM))
+        return ""
     if cmd == "/undo":
         sha = _last_checkpoint(repo_root)
         if not sha:
-            print(_color("Нет чекпоинта для отката.", DIM))
+            print(_color(t("No checkpoint to roll back to.",
+                           "Нет чекпоинта для отката."), DIM))
             return ""
         rollback(repo_root, sha)
-        print(_color(f"↩ откатил к чекпоинту {sha[:8]} "
-                     "(изменения последней задачи отменены).", GREEN))
+        print(_color(t(f"↩ rolled back to checkpoint {sha[:8]} "
+                       "(last task's changes undone).",
+                       f"↩ откатил к чекпоинту {sha[:8]} "
+                       "(изменения последней задачи отменены)."), GREEN))
         return ""
     if cmd == "/help":
         _print_help(config)
@@ -744,33 +828,42 @@ def _session_command(line: str, session: dict) -> str | None:
     def onoff(cur: bool) -> bool:
         return True if arg.lower() == "on" else False if arg.lower() == "off" else not cur
 
+    def _on(b):
+        return t("on", "вкл") if b else t("off", "выкл")
+
     if cmd == "/dry":
         session["dry_run"] = onoff(session["dry_run"])
-        return _color(f"режим dry-run: {'вкл' if session['dry_run'] else 'выкл'}", DIM)
+        return _color(t("dry-run mode: ", "режим dry-run: ") + _on(session["dry_run"]),
+                      DIM)
     if cmd == "/auto":
         session["auto"] = onoff(session["auto"])
-        return _color(f"авто-одобрение правок: {'вкл' if session['auto'] else 'выкл'}"
-                      + (" (агент правит без запроса)" if session["auto"] else ""), DIM)
+        return _color(t("auto-approve edits: ", "авто-одобрение правок: ")
+                      + _on(session["auto"])
+                      + (t(" (agent edits without asking)",
+                           " (агент правит без запроса)") if session["auto"] else ""),
+                      DIM)
     if cmd == "/guard":
         # guard on = checkpoint commit before agents; off = skip it
         session["no_commit_guard"] = (
             False if arg.lower() == "on" else True if arg.lower() == "off"
             else not session["no_commit_guard"])
-        on = not session["no_commit_guard"]
-        return _color(f"чекпоинт-коммит: {'вкл' if on else 'выкл'}", DIM)
+        return _color(t("checkpoint commit: ", "чекпоинт-коммит: ")
+                      + _on(not session["no_commit_guard"]), DIM)
     if cmd == "/steps":
         if arg.lower() in ("", "off", "0"):
             session["max_steps"] = None
-            return _color("лимит шагов: по умолчанию", DIM)
+            return _color(t("step limit: default", "лимит шагов: по умолчанию"), DIM)
         try:
             session["max_steps"] = int(arg)
         except ValueError:
-            return _color("Использование: /steps N   (или /steps off)", DIM)
-        return _color(f"лимит шагов: {session['max_steps']}", DIM)
+            return _color(t("Usage: /steps N   (or /steps off)",
+                            "Использование: /steps N   (или /steps off)"), DIM)
+        return _color(t("step limit: ", "лимит шагов: ") + str(session["max_steps"]),
+                      DIM)
     if cmd == "/test":
         if arg.lower() in ("", "off"):
             session["test_cmd"] = None
-            return _color("test-cmd: выкл", DIM)
+            return _color("test-cmd: " + _on(False), DIM)
         session["test_cmd"] = arg
         return _color(f"test-cmd: {arg}", DIM)
     return None
@@ -808,7 +901,7 @@ def _prompt(session: dict) -> str:
 
 
 _REPL_COMMANDS = ["/help", "/journal", "/config", "/stats", "/clear", "/undo",
-                  "/dry", "/auto", "/steps", "/test", "/guard", "/exit",
+                  "/dry", "/auto", "/steps", "/test", "/guard", "/lang", "/exit",
                   "/l0", "/l1", "/l2", "/l3"]
 
 
@@ -852,12 +945,15 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
         _setup_readline()
     print(_banner(repo_root, config))
     if not ensure_git_repo(repo_root):
-        print(_color(
+        print(_color(t(
+            "  ⚠ Not a git repo — agents won't run here (a checkpoint is needed).",
             "  ⚠ Это не git-репозиторий — агенты здесь не запустятся "
-            "(нужен чекпоинт для отката).", ACCENT))
-        print(_color(
+            "(нужен чекпоинт для отката)."), ACCENT))
+        print(_color(t(
+            "    cd into a project: cd ~/your-project && relay   "
+            "(or add --no-commit-guard to a task).",
             "    Перейди в проект: cd ~/твой-проект && relay   "
-            "(или добавляй --no-commit-guard к задаче).", DIM))
+            "(или добавляй --no-commit-guard к задаче)."), DIM))
     while True:
         try:
             line = input_fn(_prompt(session))
@@ -884,18 +980,20 @@ def interactive(config: Config, repo_root: Path, *, input_fn=None,
                 return 0
             if result == "":
                 continue
-            print(_color(f"Неизвестная команда {first}. /help — список.", DIM),
+            print(_color(t(f"Unknown command {first}. /help for the list.",
+                           f"Неизвестная команда {first}. /help — список."), DIM),
                   file=sys.stderr)
             continue
         try:
             parsed = _apply_session(parse_args(shlex.split(line)), session)
         except ValueError as exc:
-            print(f"Не удалось разобрать строку: {exc}", file=sys.stderr)
+            print(t(f"Couldn't parse the line: {exc}",
+                    f"Не удалось разобрать строку: {exc}"), file=sys.stderr)
             continue
         try:
             dispatch(parsed, config, repo_root)
         except Exception as exc:  # keep the session alive on any per-task error
-            print(f"Ошибка: {exc}", file=sys.stderr)
+            print(t(f"Error: {exc}", f"Ошибка: {exc}"), file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -911,12 +1009,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
     except (KeyError, ValueError, OSError) as exc:
-        detail = (f"отсутствует ключ {exc}" if isinstance(exc, KeyError)
-                  else str(exc))
-        print(f"Ошибка в config.toml: {detail}\n"
-              "Проверь ~/.orchestrator/config.toml (или встроенный конфиг).",
+        detail = (t(f"missing key {exc}", f"отсутствует ключ {exc}")
+                  if isinstance(exc, KeyError) else str(exc))
+        print(t(f"config.toml error: {detail}\n"
+                "Check ~/.orchestrator/config.toml (or the built-in config).",
+                f"Ошибка в config.toml: {detail}\n"
+                "Проверь ~/.orchestrator/config.toml (или встроенный конфиг)."),
               file=sys.stderr)
         return 7
+    set_lang(os.environ.get("RELAY_LANG") or config.lang)
     repo_root = Path.cwd()
 
     # Bare `relay` (no arguments at all) opens the interactive REPL.

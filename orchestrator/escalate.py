@@ -60,8 +60,8 @@ def build_escalation_prompt(original_task: str, attempts: list[str],
     diff = git_diff(repo_root, _runner=_runner)
     attempt_lines = "\n".join(f"- {a}" for a in attempts)
     return (
-        f"Исходная задача:\n{original_task}\n\n"
-        f"Предыдущие попытки провалились:\n{attempt_lines}\n\n"
-        f"Текущее состояние (git diff):\n{diff}\n\n"
-        "Файлы уже на диске. Продолжи с этого состояния и доведи задачу до конца."
+        f"Original task:\n{original_task}\n\n"
+        f"Previous attempts failed:\n{attempt_lines}\n\n"
+        f"Current state (git diff):\n{diff}\n\n"
+        "The files are already on disk. Continue from this state and finish the task."
     )

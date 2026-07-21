@@ -81,6 +81,7 @@ class Config:
     budget_path: str
     test_cmd: str | None
     task_timeout_seconds: int
+    lang: str = "en"
     active_path: str = ""
 
 
@@ -150,5 +151,6 @@ def load_config(path: Path | None = None) -> Config:
         budget_path=raw["budget_path"],
         test_cmd=test_cmd,
         task_timeout_seconds=int(raw.get("task_timeout_seconds", 600)),
+        lang=str(raw.get("lang", "en")),
         active_path=str(path),
     )
