@@ -123,28 +123,27 @@ CLI defined under `[frameworks.*]` with a command template and an output `format
     [frameworks.codex]                    # OpenAI Codex CLI (ChatGPT login)
     cmd = 'codex exec "{prompt}"'
     format = "text"                       # any CLI; live output, no token stats
-    auto = ["--dangerously-bypass-approvals-and-sandbox"]
+    auto = []                             # safe default; /auto uses Codex's own prompts
 
 `format` picks the parser: `opencode-json`, `claude-json`, or `text` (any CLI).
+`auto` lists the flags appended in `/auto` mode — keep it conservative (a
+sandbox-bypass flag here would let the agent run anything without approval).
 A level marked `metered = true` counts against the subscription/usage window.
 
 **Free-model rotation.** OpenRouter's free models rotate and rate-limit (20/min,
-200/day), so each level holds a **list** of fallbacks. On a `429` / model-unavailable
-error relay rotates to the next model in the list (with a short backoff) instead of
-escalating a whole level. Run `relay models` to see the currently available free /
-cheap models and refresh your `models = [...]` lists.
-
-## License
-
-[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify and share for any
-**noncommercial** purpose. Commercial use is not permitted.
+200/day), so each free level (L0/L1) holds a **list** of fallback models. On a
+`429` / model-unavailable error relay rotates to the next model in the list (with
+a short backoff) instead of escalating a whole level. Run `relay models` to see the
+currently available free / cheap models and refresh your `models = [...]` lists.
 
 **Custom ladder without editing the repo:** drop your own `~/.orchestrator/config.toml`
-(or point `$RELAY_CONFIG` at a file). It overrides the packaged default.
+(or point `$RELAY_CONFIG` at a file) — it overrides the packaged default. `relay init`
+creates one for you.
 
-**Codex / ChatGPT user, no OpenRouter?** Copy `config.codex.toml` to
-`~/.orchestrator/config.toml` — the whole ladder runs on `codex` (you keep the
-REPL, journal, `/undo`, safeguards and routing; token stats need a json framework).
+**Codex / ChatGPT user, no OpenRouter?** Run `relay init` and pick Codex (or copy
+`config.codex.toml` to `~/.orchestrator/config.toml`) — the whole ladder runs on
+`codex`. You keep the REPL, journal, `/undo`, safeguards and routing; token stats
+need a json framework.
 
 ## Safeguards
 
@@ -161,3 +160,13 @@ limits itself by watching the framework's json stream and terminating the proces
 
 Escalation triggers: step limit, nonzero exit, repeated-output loop, and an
 optional failing `--test-cmd`. Real per-task cost is recorded in the journal.
+
+## Note on language
+
+Relay's UI (banner, `/help`, status messages) is currently in Russian; the code,
+config keys and this README are in English. Tasks can be written in any language.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify and share for any
+**noncommercial** purpose. Commercial use is not permitted.
