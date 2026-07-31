@@ -9,17 +9,31 @@ from .config import LADDER, Config
 from .runner import RunResult
 
 
-def next_level(level: str) -> str | None:
-    idx = LADDER.index(level)
-    return LADDER[idx + 1] if idx + 1 < len(LADDER) else None
+def next_level(level: str, ladder: list[str] | None = None) -> str | None:
+    rungs = ladder or LADDER
+    if level not in rungs:
+        return None
+    idx = rungs.index(level)
+    return rungs[idx + 1] if idx + 1 < len(rungs) else None
 
 
-def detect_loop(stdout: str, threshold: int = 3) -> bool:
+# A repeated line only means "stuck" if it dominates the output. Agents legally
+# repeat short lines (tool markers, separators, blank-ish frames) while making
+# real progress — counting those as a loop escalates a healthy run to a pricier
+# level for nothing.
+_LOOP_MIN_LINE_LEN = 4
+_LOOP_MIN_SHARE = 0.30
+
+
+def detect_loop(stdout: str, threshold: int = 4) -> bool:
     lines = [ln.strip() for ln in stdout.splitlines() if ln.strip()]
     if not lines:
         return False
-    counts = Counter(lines)
-    return max(counts.values()) >= threshold
+    candidates = [ln for ln in lines if len(ln) >= _LOOP_MIN_LINE_LEN]
+    if not candidates:
+        return False
+    _, count = Counter(candidates).most_common(1)[0]
+    return count >= threshold and count / len(lines) >= _LOOP_MIN_SHARE
 
 
 def _run_test_cmd(cmd: str, cwd: Path) -> int:

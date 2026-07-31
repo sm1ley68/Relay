@@ -84,6 +84,19 @@ class Config:
     lang: str = "en"
     active_path: str = ""
 
+    @property
+    def ladder(self) -> list[str]:
+        """The levels this config actually defines, cheapest first.
+
+        ``LADDER`` is only the canonical naming/order; a user config may define
+        fewer levels (or extra ones). Everything that walks the ladder — the
+        banner, escalation, the routing heuristics — must use this, or a
+        3-level config blows up with a KeyError on a name it never declared.
+        """
+        known = [lvl for lvl in LADDER if lvl in self.levels]
+        extra = sorted(lvl for lvl in self.levels if lvl not in LADDER)
+        return known + extra
+
 
 def _resolve_config_path(path: Path | None) -> Path:
     """arg > $RELAY_CONFIG > ~/.orchestrator/config.toml > packaged default."""
@@ -136,6 +149,14 @@ def load_config(path: Path | None = None) -> Config:
                 auto=(["--auto"] if legacy == "opencode"
                       else ["--permission-mode", "acceptEdits"]),
             )
+
+    if not levels:
+        raise ValueError("no [levels.*] section — at least one level is required")
+    unknown = sorted({lv.framework for lv in levels.values()} - set(frameworks))
+    if unknown:
+        raise ValueError(
+            f"level(s) reference undefined framework(s): {', '.join(unknown)} "
+            f"— add a [frameworks.{unknown[0]}] section")
 
     test_cmd = raw.get("test_cmd") or None
 

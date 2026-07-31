@@ -347,47 +347,90 @@ def test_orchestrate_escalates_on_failure(tmp_path: Path):
     assert journal[-1].escalations == ["L0->L1"]
 
 
+class FakeProc:
+    def __init__(self, returncode, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
 def test_checkpoint_commit_failure_raises(tmp_path: Path):
     calls = []
-
-    class FakeProc:
-        def __init__(self, returncode, stdout=""):
-            self.returncode = returncode
-            self.stdout = stdout
 
     def fake_runner(argv):
         calls.append(argv)
         if argv[:2] == ["git", "commit"]:
             return FakeProc(1, "")
+        if argv[:3] == ["git", "diff", "--cached"]:
+            return FakeProc(1, "")        # 1 = there ARE staged changes
         return FakeProc(0, "deadbeef\n")
 
     with pytest.raises(RuntimeError):
         checkpoint_commit(tmp_path, _runner=fake_runner)
 
-    # must not have gone on to call rev-parse and return a bogus sha
-    assert ["git", "rev-parse", "HEAD"] not in calls
+    # must not have gone on to call rev-parse HEAD and return a bogus sha
+    assert calls[-1][:2] == ["git", "commit"]
 
 
 def test_checkpoint_commit_success(tmp_path: Path):
     calls = []
 
-    class FakeProc:
-        def __init__(self, returncode, stdout=""):
-            self.returncode = returncode
-            self.stdout = stdout
-
     def fake_runner(argv):
         calls.append(argv)
         if argv[:2] == ["git", "rev-parse"]:
             return FakeProc(0, "deadbeef123\n")
+        if argv[:3] == ["git", "diff", "--cached"]:
+            return FakeProc(1, "")        # staged changes present -> commit
+        if argv[:2] == ["git", "ls-files"]:
+            return FakeProc(0, "")
         return FakeProc(0, "")
 
     sha = checkpoint_commit(tmp_path, _runner=fake_runner)
 
-    assert calls[0] == ["git", "add", "-A"]
-    assert calls[1][:2] == ["git", "commit"]
-    assert calls[2] == ["git", "rev-parse", "HEAD"]
+    assert calls[0] == ["git", "add", "-u"]   # never a blanket `git add -A`
+    assert ["git", "commit", "-m", "orchestrator: checkpoint"] in calls
     assert sha == "deadbeef123"
+
+
+def test_checkpoint_skips_untracked_secrets(tmp_path: Path):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        if argv[:2] == ["git", "ls-files"]:
+            return FakeProc(0, ".env.local\nsrc/app.py\nkeys/id_rsa\nnotes.md\n")
+        if argv[:3] == ["git", "diff", "--cached"]:
+            return FakeProc(1, "")
+        if argv[:2] == ["git", "rev-parse"]:
+            return FakeProc(0, "sha1\n")
+        return FakeProc(0, "")
+
+    checkpoint_commit(tmp_path, _runner=fake_runner)
+
+    added = [c for c in calls if c[:2] == ["git", "add"] and "--" in c]
+    assert added, "expected an explicit add of the safe untracked files"
+    staged = added[0][added[0].index("--") + 1:]
+    assert staged == ["src/app.py", "notes.md"]   # secrets never committed
+    assert ".env.local" not in staged and "keys/id_rsa" not in staged
+
+
+def test_checkpoint_makes_no_empty_commit_when_tree_is_clean(tmp_path: Path):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        if argv[:2] == ["git", "ls-files"]:
+            return FakeProc(0, "")
+        if argv[:3] == ["git", "diff", "--cached"]:
+            return FakeProc(0, "")        # 0 = nothing staged
+        if argv[:2] == ["git", "rev-parse"]:
+            return FakeProc(0, "headsha\n")
+        return FakeProc(0, "")
+
+    sha = checkpoint_commit(tmp_path, _runner=fake_runner)
+
+    # HEAD already is the restore point -> no junk commit added to history
+    assert sha == "headsha"
+    assert not [c for c in calls if c[:2] == ["git", "commit"]]
 
 
 def test_rollback_invokes_git_reset(tmp_path: Path):

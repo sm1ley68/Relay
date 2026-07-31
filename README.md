@@ -8,7 +8,7 @@ framework: `opencode` + OpenRouter for levels L0–L2 (free/cheap), `claude` (Pr
 for L3. Conserves the Claude Pro limit by sending routine work to cheap models
 and escalating only on failure.
 
-Ladder: **L0** North Mini Code (free) · **L1** Laguna M.1 (free) ·
+Ladder: **L0** North Mini Code (free) · **L1** Laguna S 2.1 (free) ·
 **L2** DeepSeek V4 Flash ($0.14/$0.28 per 1M) · **L3** Claude Code (Pro subscription).
 
 ## Quick start
@@ -87,7 +87,7 @@ One-shot (task as arguments):
 
 (`orchestrator` is a still-supported alias for `relay`.)
 
-Levels: `/l0` trivial (North Mini Code) · `/l1` simple edits (Laguna M.1) ·
+Levels: `/l0` trivial (North Mini Code) · `/l1` simple edits (Laguna S 2.1) ·
 `/l2` workhorse (DeepSeek V4 Flash) · `/l3` architecture / hard bugs (Claude Code).
 
 ## How routing works
@@ -96,9 +96,17 @@ Levels: `/l0` trivial (North Mini Code) · `/l1` simple edits (Laguna M.1) ·
 2. Heuristics: keyword lists + grep-based file count.
 3. Cheap-LLM score (1–5) for the rest.
 
-On failure (nonzero exit, step limit, loop, failing tests) the task escalates one
-level up, carrying a journal + `git diff`. A checkpoint commit is made before any
-agent runs — roll back with `git reset --hard <checkpoint>`.
+If a model is rate-limited, unavailable, or returns nothing at all, Relay rotates
+to the next model **at the same level** before spending a pricier one. Only a real
+failure (nonzero exit, step limit, loop, timeout, failing tests) escalates one
+level up, carrying a journal + `git diff`.
+
+Before any agent runs, Relay takes a checkpoint of the working tree so `/undo`
+can restore it. It stages tracked edits plus untracked files, **skipping anything
+that looks like a secret** (`.env*`, `*.pem`, keys — reported when skipped), and
+makes no commit at all when there is nothing to snapshot, so a session doesn't
+leave a trail of empty commits. `/undo` refuses to run past commits you made
+yourself unless you confirm it.
 
 Each run prints the model chosen (with the reason) and a token/context/cost
 footer parsed from the framework's json stream — both opencode (L0–L2) and

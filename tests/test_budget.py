@@ -1,15 +1,6 @@
+import json
 from pathlib import Path
-from orchestrator.config import Level
-from orchestrator.budget import cost_for, ProWindow
-
-
-def test_cost_for_per_million():
-    lvl = Level("L2", ["minimax/minimax-m3"], 0.60, 2.40, "opencode")
-    # 1M in, 1M out
-    assert cost_for(lvl, 1_000_000, 1_000_000) == 3.0
-    # free level
-    free = Level("L0", ["x:free"], 0.0, 0.0, "opencode")
-    assert cost_for(free, 500_000, 500_000) == 0.0
+from orchestrator.budget import ProWindow
 
 
 def test_pro_window_counts_and_expires(tmp_path: Path):
@@ -44,3 +35,34 @@ def test_pro_window_degrades_on_non_iterable_json(tmp_path: Path):
     w = ProWindow(p, 5.0, 5)
     assert w.runs_in_window() == 0
     w.record_run()
+
+
+def test_pro_window_prunes_expired_stamps_on_write(tmp_path: Path):
+    # the ledger must stay bounded instead of growing for the life of the install
+    p = tmp_path / "budget.json"
+    w = ProWindow(p, window_hours=1.0, max_runs=100)
+    for i in range(20):
+        w.record_run(1000.0 + i)
+    assert len(json.loads(p.read_text())) == 20
+
+    w.record_run(1000.0 + 20 + 3600)  # an hour later: all the old ones expired
+    assert json.loads(p.read_text()) == [1000.0 + 20 + 3600]
+
+
+def test_pro_window_remaining_and_reset(tmp_path: Path):
+    w = ProWindow(tmp_path / "budget.json", window_hours=5.0, max_runs=3)
+    now = 1000.0
+    assert w.remaining(now) == 3
+    w.record_run(now)
+    assert w.remaining(now) == 2
+    # the oldest run ages out exactly one window after it was recorded
+    assert w.resets_in_seconds(now) == 5 * 3600
+
+
+def test_pro_window_write_is_atomic_no_partial_file(tmp_path: Path):
+    p = tmp_path / "budget.json"
+    w = ProWindow(p, 5.0, 5)
+    w.record_run(1000.0)
+    # no stray temp files left behind by the atomic replace
+    assert [f.name for f in tmp_path.iterdir()] == ["budget.json"]
+    assert json.loads(p.read_text()) == [1000.0]

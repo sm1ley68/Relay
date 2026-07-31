@@ -43,7 +43,7 @@ framework = "opencode"
 
 [levels.L1]
 models = [
-    "openrouter/poolside/laguna-m.1:free",
+    "openrouter/poolside/laguna-s-2.1:free",
     "openrouter/google/gemma-4-31b-it:free",
     "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
 ]

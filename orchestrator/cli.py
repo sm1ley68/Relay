@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
 
 from . import budget, escalate, journal, router, runner
+from . import __version__
 from .config import Config, LADDER, load_config, load_env_file
 from .i18n import t, set_lang, current_lang
 
@@ -18,6 +20,13 @@ DIM = (140, 140, 140)
 GREEN = (126, 200, 140)   # free tier
 YELLOW = (220, 180, 90)   # cheap paid tier
 MAGENTA = (198, 130, 220)  # Claude Pro tier
+
+
+def _level_range(rungs: list[str]) -> str:
+    """'/l0 .. /l3' for the levels this config actually defines."""
+    if len(rungs) == 1:
+        return "/" + rungs[0].lower()
+    return f"/{rungs[0].lower()} .. /{rungs[-1].lower()}"
 
 
 def _level_rgb(config: Config, level: str) -> tuple[int, int, int]:
@@ -71,16 +80,17 @@ def _banner(repo_root: Path, config: Config) -> str:
         m = model.removeprefix("openrouter/")
         return m.split("/")[0].split(":")[0]  # provider / bare name
 
+    rungs = config.ladder
     ladder = " · ".join(f"{lvl} {_short(config.levels[lvl].models[0])}"
-                        for lvl in LADDER)
+                        for lvl in rungs if config.levels[lvl].models)
 
     tips = [
         _color(t("Tips", "Подсказки"), DIM),
         _color("─────────────────────────────", DIM),
         t("• just type a task → auto-picked level",
           "• просто задача → авто-выбор уровня"),
-        t(f"• /l0 .. /l{len(LADDER) - 1} — force a level",
-          f"• /l0 .. /l{len(LADDER) - 1} — форсировать уровень"),
+        t(f"• {_level_range(rungs)} — force a level",
+          f"• {_level_range(rungs)} — форсировать уровень"),
         t("• --dry-run — show, don't run", "• --dry-run — показать, не запуская"),
         "• /help · /journal · /config · exit",
     ]
@@ -105,9 +115,9 @@ def _banner(repo_root: Path, config: Config) -> str:
         "",
     ]
 
-    title = _color("Relay v0.1.0", bold=True)
-    # visible length of title ignores ANSI codes for border math
-    title_vis = "Relay v0.1.0"
+    title_vis = f"Relay v{__version__}"
+    title = _color(title_vis, bold=True)
+    # visible length of the title ignores ANSI codes for the border math
     fill = cw + 2 - (len("╭─  ") + len(title_vis))
     top = _color("╭─ ") + title + _color(" " + "─" * fill + "╮")
     bottom = _color("╰" + "─" * (cw + 2) + "╯")
@@ -201,8 +211,21 @@ def parse_args(argv: list[str]) -> ParsedArgs:
     words: list[str] = []
 
     it = iter(argv)
+
+    def _value(flag: str) -> str:
+        # A missing value used to raise StopIteration straight out of here,
+        # which killed the whole REPL session; a ValueError is caught and shown.
+        try:
+            return next(it)
+        except StopIteration:
+            raise ValueError(t(f"{flag} needs a value",
+                               f"{flag} требует значение")) from None
+
     for tok in it:
         low = tok.lower()
+        if tok == "--":            # everything after is the task, verbatim
+            words.extend(it)
+            break
         if low in PREFIXES:
             explicit_level = PREFIXES[low]
         elif low in SUBCOMMANDS and not words:
@@ -214,9 +237,15 @@ def parse_args(argv: list[str]) -> ParsedArgs:
         elif tok == "--auto":
             auto = True
         elif tok == "--max-steps":
-            max_steps = int(next(it))
+            raw = _value("--max-steps")
+            try:
+                max_steps = int(raw)
+            except ValueError:
+                raise ValueError(t(f"--max-steps expects a number, got {raw!r}",
+                                   f"--max-steps ожидает число, получено {raw!r}")
+                                 ) from None
         elif tok == "--test-cmd":
-            test_cmd = next(it)
+            test_cmd = _value("--test-cmd")
         else:
             words.append(tok)
 
@@ -230,28 +259,64 @@ def ensure_git_repo(root: Path) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
+CHECKPOINT_MESSAGE = "orchestrator: checkpoint"
+
+# Untracked files that must never be swept into a checkpoint commit. A commit
+# is durable and pushable, so auto-committing a stray key is how a secret
+# leaves the machine.
+_SECRET_GLOBS = ("*.env", ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx",
+                 "id_rsa*", "id_ed25519*", "*.keystore", "*.jks",
+                 "*secret*", "*credential*", "*token*", "*.crt")
+
+
+def _looks_secret(path: str) -> bool:
+    from fnmatch import fnmatch
+    name = PurePosixPath(path).name.lower()
+    return any(fnmatch(name, pat) for pat in _SECRET_GLOBS)
+
+
+def _checkpoint_failure() -> RuntimeError:
+    return RuntimeError(
+        t("Failed to create the checkpoint commit (check git user.name/email).",
+          "Не удалось создать чекпоинт-коммит (проверьте git user.name/email).")
+    )
+
+
 def checkpoint_commit(root: Path, *, _runner=None) -> str:
+    """Snapshot the tree so a task can be undone. Returns the restore-point sha.
+
+    Stages tracked edits plus non-secret untracked files — never a blanket
+    ``git add -A``. When there is nothing to snapshot, HEAD already *is* the
+    restore point, so no empty commit is made (which used to leave one junk
+    commit per task in the user's history).
+    """
     def run(argv):
         if _runner is not None:
             return _runner(argv)
         return subprocess.run(argv, cwd=str(root), capture_output=True, text=True)
-    add_proc = run(["git", "add", "-A"])
-    if add_proc.returncode != 0:
-        raise RuntimeError(
-            t("Failed to create the checkpoint commit "
-              "(check git user.name/email).",
-              "Не удалось создать чекпоинт-коммит (проверьте git user.name/email).")
-        )
-    commit_proc = run(["git", "commit", "-m", "orchestrator: checkpoint",
-                       "--allow-empty"])
-    if commit_proc.returncode != 0:
-        raise RuntimeError(
-            t("Failed to create the checkpoint commit "
-              "(check git user.name/email).",
-              "Не удалось создать чекпоинт-коммит (проверьте git user.name/email).")
-        )
-    proc = run(["git", "rev-parse", "HEAD"])
-    return proc.stdout.strip()
+
+    if run(["git", "add", "-u"]).returncode != 0:
+        raise _checkpoint_failure()
+
+    listed = run(["git", "ls-files", "--others", "--exclude-standard"])
+    untracked = [p.strip() for p in (listed.stdout or "").splitlines() if p.strip()]
+    safe = [p for p in untracked if not _looks_secret(p)]
+    skipped = [p for p in untracked if _looks_secret(p)]
+    if safe and run(["git", "add", "--", *safe]).returncode != 0:
+        raise _checkpoint_failure()
+    if skipped:
+        print(_color(t(
+            f"  ⚠ not checkpointed (looks like a secret): {', '.join(skipped)}",
+            f"  ⚠ не попало в чекпоинт (похоже на секрет): {', '.join(skipped)}"),
+            DIM), file=sys.stderr)
+
+    has_head = run(["git", "rev-parse", "--verify", "HEAD"]).returncode == 0
+    if has_head and run(["git", "diff", "--cached", "--quiet"]).returncode == 0:
+        return run(["git", "rev-parse", "HEAD"]).stdout.strip()  # nothing to commit
+
+    if run(["git", "commit", "-m", CHECKPOINT_MESSAGE]).returncode != 0:
+        raise _checkpoint_failure()
+    return run(["git", "rev-parse", "HEAD"]).stdout.strip()
 
 
 def rollback(root: Path, sha: str, *, _runner=None) -> None:
@@ -302,6 +367,9 @@ def _explain_basis(basis: str) -> str:
     """Human-readable reason for why a level was chosen (for the routing line)."""
     if basis == "explicit":
         return t("forced", "выбрано вручную")
+    if basis.startswith("escalated:"):
+        prev = basis.split(":", 1)[1]
+        return t(f"escalated from {prev}", f"эскалация с {prev}")
     if basis == "llm-unavailable":
         return t("classifier unavailable, default L2",
                  "классификатор недоступен, L2 по умолчанию")
@@ -321,6 +389,11 @@ def _explain_basis(basis: str) -> str:
             return t("heuristic: 'up' keywords", "эвристика: ключевые слова «вверх»")
         if reason == "down-keyword":
             return t("heuristic: 'down' keywords", "эвристика: ключевые слова «вниз»")
+        if reason == "question":
+            return t("heuristic: a question, not an edit",
+                     "эвристика: это вопрос, а не правка")
+        if reason == "trivial":
+            return t("heuristic: small talk", "эвристика: не задача")
         if reason.startswith("up-files:") or reason.startswith("files:"):
             n = reason.split(":", 1)[1]
             return t(f"heuristic: touches {n} files",
@@ -343,20 +416,37 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
     journal_append = d.get("journal_append", journal.append)
 
     if not args.no_commit_guard and not args.dry_run:
-        checkpoint(repo_root)  # silent safety commit; roll back with /undo
+        sha = checkpoint(repo_root)  # silent safety snapshot; undo with /undo
+        if sha:
+            record_checkpoint(repo_root, sha)
 
     max_steps = args.max_steps or config.max_steps
     prompt = args.task
     level = args.explicit_level
     attempts: list[str] = []
     escalations: list[str] = []
+    escalated_from: str | None = None
+    # Cost and steps accumulate across escalation attempts: the journal records
+    # what the whole task really cost, not just its final (often cheapest) leg.
+    total_cost = 0.0
+    total_steps = 0
     pro = budget.ProWindow(Path(config.budget_path).expanduser(),
                            config.pro_window_hours, config.pro_window_max_runs)
+
+    def log(decision, model, outcome):
+        entry = journal.new_entry(args.task, decision.level, decision.basis,
+                                  decision.framework, model, outcome,
+                                  total_steps, total_cost, escalations)
+        journal_append(entry, Path(config.journal_path).expanduser())
 
     while True:
         decision = classify(args.task, config, explicit_level=level,
                             repo_root=repo_root,
                             already_failed=bool(attempts))
+        if escalated_from:
+            # Escalation passes the next level as explicit_level, which would
+            # otherwise report itself to the user as "forced".
+            decision = replace(decision, basis=f"escalated:{escalated_from}")
 
         model = decision.models[0] if decision.models else "?"
         lvl = _color(decision.level, _level_rgb(config, decision.level), bold=True)
@@ -370,10 +460,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                     f"Окно подписки ({decision.framework}) на исходе — поставьте "
                     "задачу в очередь или подождите сброса лимита."),
                   file=sys.stderr)
-            entry = journal.new_entry(args.task, decision.level, decision.basis,
-                                      decision.framework, "", "pro-exhausted",
-                                      0, 0.0, escalations)
-            journal_append(entry, Path(config.journal_path).expanduser())
+            log(decision, "", "pro-exhausted")
             return 2
 
         if metered and not args.dry_run:
@@ -384,9 +471,9 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
         if args.dry_run:
             return 0
 
-        run_cost = 0.0
         if result.usage:
-            run_cost = float(result.usage.get("cost", 0.0))
+            total_cost += float(result.usage.get("cost", 0.0))
+            total_steps += int(result.usage.get("steps", 0) or 0)
             if result.stdout and not result.stdout.endswith("\n"):
                 print()  # put the footer on its own line
             print(_usage_line(result.usage))
@@ -397,28 +484,19 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
                     f"⛔ Превышен потолок стоимости ${config.cost_ceiling_usd} — "
                     "задача прервана (эскалации нет, чтобы не тратить больше)."),
                   file=sys.stderr)
-            entry = journal.new_entry(args.task, decision.level, decision.basis,
-                                      decision.framework, result.model,
-                                      "cost-ceiling", 0, run_cost, escalations)
-            journal_append(entry, Path(config.journal_path).expanduser())
+            log(decision, result.model, "cost-ceiling")
             return 6
 
         reason = detect(result, config, repo_root)
 
         if reason is None:
-            entry = journal.new_entry(args.task, decision.level, decision.basis,
-                                      decision.framework, result.model,
-                                      "success", 0, run_cost, escalations)
-            journal_append(entry, Path(config.journal_path).expanduser())
+            log(decision, result.model, "success")
             return 0
 
         attempts.append(_attempt_note(decision.level, reason, result.stdout))
-        nxt = escalate.next_level(decision.level)
+        nxt = escalate.next_level(decision.level, config.ladder)
         if nxt is None:
-            entry = journal.new_entry(args.task, decision.level, decision.basis,
-                                      decision.framework, result.model,
-                                      f"failed:{reason}", 0, 0.0, escalations)
-            journal_append(entry, Path(config.journal_path).expanduser())
+            log(decision, result.model, f"failed:{reason}")
             print(t(f"Failed at the top level ({decision.level}): {reason}",
                     f"Провал на верхнем уровне ({decision.level}): {reason}"),
                   file=sys.stderr)
@@ -426,6 +504,7 @@ def orchestrate(args: ParsedArgs, config: Config, repo_root: Path, *,
 
         escalations.append(f"{decision.level}->{nxt}")
         prompt = escalate.build_escalation_prompt(args.task, attempts, repo_root)
+        escalated_from = decision.level
         level = nxt
 
 
@@ -434,9 +513,8 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
 
     Shared by the one-shot CLI and the interactive REPL.
     """
-    if args.test_cmd is not None:
-        import dataclasses
-        config = dataclasses.replace(config, test_cmd=args.test_cmd)
+    if args.test_cmd is not None:   # "" means explicitly disabled for this run
+        config = replace(config, test_cmd=args.test_cmd or None)
 
     if args.command == "journal":
         for e in journal.read_all(Path(config.journal_path).expanduser()):
@@ -477,6 +555,13 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
               file=sys.stderr)
         return 3
 
+    if args.explicit_level and args.explicit_level not in config.levels:
+        print(t(f"Level {args.explicit_level} is not defined in this config. "
+                f"Available: {', '.join(config.ladder)}.",
+                f"Уровень {args.explicit_level} не описан в этом конфиге. "
+                f"Доступны: {', '.join(config.ladder)}."), file=sys.stderr)
+        return 3
+
     try:
         return orchestrate(args, config, repo_root)
     except runner.FrameworkNotFound as exc:
@@ -485,6 +570,11 @@ def _dispatch(args: ParsedArgs, config: Config, repo_root: Path) -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 5
+    except ValueError as exc:
+        # e.g. a task that starts with '-' (rejected as flag smuggling)
+        print(t(f"Cannot run this task: {exc}",
+                f"Не могу выполнить задачу: {exc}"), file=sys.stderr)
+        return 3
 
 
 def _print_help(config: Config) -> None:
@@ -492,7 +582,8 @@ def _print_help(config: Config) -> None:
     rows = [
         ("<task>", t("describe a task — level is auto-picked (no flags needed)",
                      "описать задачу — уровень выберется сам (флаги не нужны)")),
-        ("/l0 .. /l3 <task>", t("force a level", "форсировать уровень")),
+        (f"{_level_range(config.ladder)} <task>",
+         t("force a level", "форсировать уровень")),
         ("/dry [on|off]", t("show-don't-run mode for the session",
                             "режим «показать, не запуская» на всю сессию")),
         ("/auto [on|off]", t("agent edits files without asking permission",
@@ -524,7 +615,7 @@ def _print_help(config: Config) -> None:
 
 def _print_config(config: Config, repo_root: Path) -> None:
     print(_color(t("Model ladder:", "Лестница моделей:"), ACCENT, bold=True))
-    for lvl in LADDER:
+    for lvl in config.ladder:
         L = config.levels[lvl]
         if L.framework == "claude":
             price = t("Pro subscription", "подписка Pro")
@@ -532,7 +623,8 @@ def _print_config(config: Config, repo_root: Path) -> None:
             price = t("free", "бесплатно")
         else:
             price = f"${L.price_in}/${L.price_out} " + t("per 1M", "за 1M")
-        print(f"  {_color(lvl, ACCENT)} · {L.models[0]} · {L.framework} · {price}")
+        model = L.models[0] if L.models else t("(no model)", "(нет модели)")
+        print(f"  {_color(lvl, ACCENT)} · {model} · {L.framework} · {price}")
     print(_color(t("Frameworks:", "Каркасы:"), ACCENT, bold=True))
     for name, fw in config.frameworks.items():
         print(f"  {name} · {fw.format} · {fw.cmd}")
@@ -543,10 +635,13 @@ def _print_config(config: Config, repo_root: Path) -> None:
         f" · ceiling ${config.cost_ceiling_usd}",
         f"лимит шагов: {config.max_steps} · таймаут {config.task_timeout_seconds}с"
         f" · потолок ${config.cost_ceiling_usd}"))
+    pro = budget.ProWindow(Path(config.budget_path).expanduser(),
+                           config.pro_window_hours, config.pro_window_max_runs)
+    left = pro.remaining()
     print("  " + t(
-        f"subscription window: {config.pro_window_max_runs} runs / "
+        f"subscription window: {left}/{config.pro_window_max_runs} runs left / "
         f"{config.pro_window_hours}h",
-        f"окно подписки: {config.pro_window_max_runs} запусков / "
+        f"окно подписки: осталось {left}/{config.pro_window_max_runs} запусков / "
         f"{config.pro_window_hours}ч"))
     print("  " + t("config", "конфиг") +
           f": {config.active_path or t('(built-in)', '(встроенный)')}")
@@ -554,12 +649,124 @@ def _print_config(config: Config, repo_root: Path) -> None:
     print("  " + t("dir", "папка") + f": {repo_root}")
 
 
+def _state_path() -> Path:
+    """Where the per-repo checkpoint pointers live ($RELAY_HOME to relocate)."""
+    home = os.environ.get("RELAY_HOME")
+    base = Path(home).expanduser() if home else Path.home() / ".orchestrator"
+    return base / "checkpoints.json"
+
+
+def _git(repo_root: Path, *argv: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *argv], cwd=str(repo_root),
+                          capture_output=True, text=True)
+
+
+def _state_key(repo_root: Path) -> str:
+    try:
+        return str(repo_root.resolve())
+    except OSError:
+        return str(repo_root)
+
+
+def _read_state() -> dict:
+    try:
+        data = json.loads(_state_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_state(state: dict) -> None:
+    try:
+        path = _state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state))
+    except OSError:
+        pass  # a lost checkpoint pointer is recoverable; a crash here isn't
+
+
+def record_checkpoint(repo_root: Path, sha: str) -> None:
+    """Remember this repo's restore point so /undo doesn't have to guess."""
+    if not sha:
+        return
+    state = _read_state()
+    state[_state_key(repo_root)] = sha
+    _write_state(state)
+
+
+def clear_checkpoint(repo_root: Path) -> None:
+    state = _read_state()
+    if state.pop(_state_key(repo_root), None) is not None:
+        _write_state(state)
+
+
 def _last_checkpoint(repo_root: Path) -> str | None:
-    proc = subprocess.run(
-        ["git", "log", "--grep=orchestrator: checkpoint", "--format=%H", "-n", "1"],
-        cwd=str(repo_root), capture_output=True, text=True)
+    """The restore point for this repo: the recorded one, else a grep fallback."""
+    recorded = _read_state().get(_state_key(repo_root))
+    if recorded and _git(repo_root, "cat-file", "-e", recorded + "^{commit}"
+                         ).returncode == 0:
+        return recorded
+    proc = _git(repo_root, "log", f"--grep={CHECKPOINT_MESSAGE}",
+                "--format=%H", "-n", "1")
     sha = proc.stdout.strip()
     return sha or None
+
+
+def _commits_between(repo_root: Path, sha: str) -> list[str]:
+    """User commits that a reset to ``sha`` would destroy (checkpoints excluded)."""
+    proc = _git(repo_root, "log", "--format=%h %s", f"{sha}..HEAD")
+    if proc.returncode != 0:
+        return []
+    return [ln for ln in proc.stdout.splitlines()
+            if ln.strip() and not ln.endswith(CHECKPOINT_MESSAGE)]
+
+
+def undo(repo_root: Path, *, confirm=None) -> str:
+    """Roll the repo back to the last checkpoint. Returns a status message.
+
+    Refuses without explicit confirmation when the reset would throw away
+    commits the user made themselves after the checkpoint — ``git reset --hard``
+    destroys those irrecoverably from the working tree.
+    """
+    sha = _last_checkpoint(repo_root)
+    if not sha:
+        return _color(t("No checkpoint to roll back to.",
+                        "Нет чекпоинта для отката."), DIM)
+
+    head = _git(repo_root, "rev-parse", "HEAD").stdout.strip()
+    dirty = bool(_git(repo_root, "status", "--porcelain").stdout.strip())
+    if head == sha and not dirty:
+        return _color(t("Already at the checkpoint — nothing to roll back.",
+                        "Уже на чекпоинте — откатывать нечего."), DIM)
+
+    lost = _commits_between(repo_root, sha)
+    if lost:
+        listing = "\n".join(f"      {c}" for c in lost)
+        print(_color(t(
+            f"  ⚠ Rolling back to {sha[:8]} would destroy "
+            f"{len(lost)} of your own commit(s):\n{listing}",
+            f"  ⚠ Откат к {sha[:8]} уничтожит ваших коммитов — "
+            f"{len(lost)}:\n{listing}"), (220, 100, 100)), file=sys.stderr)
+        ask = confirm or _confirm
+        if not ask(t("Destroy them and roll back? [y/N]: ",
+                     "Уничтожить их и откатиться? [y/N]: ")):
+            return _color(t("Cancelled — nothing changed.",
+                            "Отменено — ничего не изменилось."), DIM)
+
+    stat = _git(repo_root, "diff", "--stat", sha).stdout.strip()
+    rollback(repo_root, sha)
+    clear_checkpoint(repo_root)   # a second /undo must not silently re-fire
+    msg = _color(t(f"↩ rolled back to checkpoint {sha[:8]}.",
+                   f"↩ откатил к чекпоинту {sha[:8]}."), GREEN)
+    return f"{msg}\n{_color(stat, DIM)}" if stat else msg
+
+
+def _confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() in ("y", "yes", "д", "да")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
 
 
 def _print_stats(config: Config) -> None:
@@ -587,7 +794,7 @@ def _print_stats(config: Config) -> None:
         f"эскалаций {escalated} ({escalated * 100 // total}%)"),
         ACCENT, bold=True))
     print(_color(t("By level:", "По уровням:"), DIM))
-    for lvl in LADDER:
+    for lvl in config.ladder:
         n = by_level.get(lvl, 0)
         if n:
             bar = "█" * min(30, n)
@@ -743,25 +950,41 @@ def _list_models(config: Config) -> int:
 
     free, cheap = [], []
     for m in data.get("data", []):
-        p = m.get("pricing", {})
-        pin = float(p.get("prompt", 0) or 0) * 1e6
-        pout = float(p.get("completion", 0) or 0) * 1e6
+        ident = m.get("id")
+        if not ident:
+            continue
+        p = m.get("pricing", {}) or {}
+        try:
+            pin = float(p.get("prompt", 0) or 0) * 1e6
+            pout = float(p.get("completion", 0) or 0) * 1e6
+        except (TypeError, ValueError):
+            continue
+        # Router aliases carry sentinel negative prices — not real models to pin.
+        if pin < 0 or pout < 0:
+            continue
         ctx = m.get("context_length", 0) or 0
         if pin == 0 and pout == 0:
-            free.append((ctx, m["id"]))
+            free.append((ctx, ident))
         elif pin <= 1.0:
-            cheap.append((pin, pout, m["id"]))
+            cheap.append((pin, pout, ident))
     free.sort(reverse=True)
     cheap.sort()
+    shown = 15
 
     print(_color(t(f"Free models ({len(free)}) — for L0/L1:",
                    f"Бесплатные модели ({len(free)}) — для L0/L1:"), ACCENT, bold=True))
     for ctx, ident in free:
         print(f"  openrouter/{ident}   ctx={ctx}")
-    print(_color(t("\nCheap (≤ $1/1M in) — for L2:",
-                   "\nДешёвые (≤ $1/1M вход) — для L2:"), ACCENT, bold=True))
-    for pin, pout, ident in cheap[:15]:
+    more = max(0, len(cheap) - shown)
+    print(_color(t(f"\nCheap (≤ $1/1M in) — for L2, {min(shown, len(cheap))} "
+                   f"of {len(cheap)}:",
+                   f"\nДешёвые (≤ $1/1M вход) — для L2, {min(shown, len(cheap))} "
+                   f"из {len(cheap)}:"), ACCENT, bold=True))
+    for pin, pout, ident in cheap[:shown]:
         print(f"  openrouter/{ident}   ${pin:.2f}/${pout:.2f}")
+    if more:
+        print(_color(t(f"  … and {more} more (cheapest shown first)",
+                       f"  … и ещё {more} (сначала самые дешёвые)"), DIM))
     print(_color(t("\nPut the ones you want in models=[...] in "
                    "~/.orchestrator/config.toml (with the openrouter/ prefix). "
                    "Relay rotates the list on a 429.",
@@ -771,7 +994,8 @@ def _list_models(config: Config) -> int:
     return 0
 
 
-def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
+def _repl_command(line: str, config: Config, repo_root: Path,
+                  *, confirm=None) -> str | None:
     """Handle a /command. Returns 'exit' to quit, '' if handled, None if not one."""
     cmd = line.split()[0].lower()
     if cmd in ("/exit", "/quit"):
@@ -782,16 +1006,7 @@ def _repl_command(line: str, config: Config, repo_root: Path) -> str | None:
         print(_color(t(f"language: {current_lang()}", f"язык: {current_lang()}"), DIM))
         return ""
     if cmd == "/undo":
-        sha = _last_checkpoint(repo_root)
-        if not sha:
-            print(_color(t("No checkpoint to roll back to.",
-                           "Нет чекпоинта для отката."), DIM))
-            return ""
-        rollback(repo_root, sha)
-        print(_color(t(f"↩ rolled back to checkpoint {sha[:8]} "
-                       "(last task's changes undone).",
-                       f"↩ откатил к чекпоинту {sha[:8]} "
-                       "(изменения последней задачи отменены)."), GREEN))
+        print(undo(repo_root, confirm=confirm))
         return ""
     if cmd == "/help":
         _print_help(config)
@@ -862,7 +1077,9 @@ def _session_command(line: str, session: dict) -> str | None:
                       DIM)
     if cmd == "/test":
         if arg.lower() in ("", "off"):
-            session["test_cmd"] = None
+            # "" means explicitly disabled (and overrides config.test_cmd);
+            # None would mean "unset", which lets the config value win.
+            session["test_cmd"] = ""
             return _color("test-cmd: " + _on(False), DIM)
         session["test_cmd"] = arg
         return _color(f"test-cmd: {arg}", DIM)
@@ -902,7 +1119,7 @@ def _prompt(session: dict) -> str:
 
 _REPL_COMMANDS = ["/help", "/journal", "/config", "/stats", "/clear", "/undo",
                   "/dry", "/auto", "/steps", "/test", "/guard", "/lang", "/exit",
-                  "/l0", "/l1", "/l2", "/l3"]
+                  *PREFIXES]
 
 
 def _setup_readline() -> None:
@@ -1004,7 +1221,12 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     argv = list(sys.argv[1:] if argv is None else argv)
-    args = parse_args(argv)
+    try:
+        args = parse_args(argv)
+    except ValueError as exc:
+        print(t(f"Bad arguments: {exc}", f"Ошибка в аргументах: {exc}"),
+              file=sys.stderr)
+        return 3
     load_env_file()  # pick up OPENROUTER_API_KEY from a .env in the CWD
     try:
         config = load_config()

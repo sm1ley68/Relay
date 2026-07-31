@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 
-from .config import Level
-
-
-def cost_for(level: Level, tokens_in: int, tokens_out: int) -> float:
-    return (tokens_in * level.price_in + tokens_out * level.price_out) / 1_000_000
-
 
 class ProWindow:
+    """Rolling count of runs against a subscription's usage window."""
+
     def __init__(self, path: Path, window_hours: float, max_runs: int):
         self.path = Path(path)
         self.window_seconds = window_hours * 3600
@@ -22,16 +20,27 @@ class ProWindow:
             return []
         try:
             return [float(x) for x in json.loads(self.path.read_text())]
-        except (json.JSONDecodeError, ValueError, TypeError):
+        except (json.JSONDecodeError, ValueError, TypeError, OSError):
             return []
 
     def _save(self, stamps: list[float]) -> None:
+        """Write atomically — a crash mid-write must not blank the ledger."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(stamps))
+        fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(stamps, fh)
+            os.replace(tmp, self.path)
+        except OSError:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
     def record_run(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
-        stamps = self._load()
+        # Prune on write: stamps older than the window can never matter again,
+        # so the file stays bounded instead of growing for the life of the install.
+        cutoff = now - self.window_seconds
+        stamps = [s for s in self._load() if s >= cutoff]
         stamps.append(now)
         self._save(stamps)
 
@@ -39,6 +48,16 @@ class ProWindow:
         now = time.time() if now is None else now
         cutoff = now - self.window_seconds
         return sum(1 for s in self._load() if s >= cutoff)
+
+    def remaining(self, now: float | None = None) -> int:
+        return max(0, self.max_runs - self.runs_in_window(now))
+
+    def resets_in_seconds(self, now: float | None = None) -> float:
+        """Seconds until the oldest run in the window ages out (0 if none)."""
+        now = time.time() if now is None else now
+        cutoff = now - self.window_seconds
+        live = [s for s in self._load() if s >= cutoff]
+        return max(0.0, (min(live) + self.window_seconds) - now) if live else 0.0
 
     def can_run(self, now: float | None = None) -> bool:
         return self.runs_in_window(now) < self.max_runs

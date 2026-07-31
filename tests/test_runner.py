@@ -8,9 +8,17 @@ from orchestrator.runner import (
 CFG = load_config()
 
 
+def consume(framework, lines, write):
+    """Drive a _StreamParser over a list of lines, as a live run would."""
+    from orchestrator.runner import _StreamParser
+    parser = _StreamParser(framework)
+    for line in lines:
+        parser.feed(line, write)
+    return parser
+
+
 def test_consume_opencode_json_streams_text_and_sums_usage():
     import json as _json
-    from orchestrator.runner import _consume_opencode_json
     lines = [
         _json.dumps({"type": "text", "part": {"text": "po"}}),
         _json.dumps({"type": "tool_use", "part": {"tool": "bash"}}),
@@ -24,7 +32,8 @@ def test_consume_opencode_json_streams_text_and_sums_usage():
         "",  # blank line ignored
     ]
     written = []
-    text, usage = _consume_opencode_json(lines, written.append)
+    parser = consume("opencode", lines, written.append)
+    text, usage = parser.text, parser.usage
     assert text == "pong"                       # only assistant text captured
     assert "".join(written).startswith("po")    # streamed live
     assert usage["input"] == 253 and usage["output"] == 8
@@ -36,7 +45,6 @@ def test_consume_opencode_json_streams_text_and_sums_usage():
 
 def test_consume_claude_json_streams_text_and_reads_usage():
     import json as _json
-    from orchestrator.runner import _consume_claude_json
     lines = [
         _json.dumps({"type": "system", "subtype": "init"}),
         _json.dumps({"type": "assistant", "message": {"content": [
@@ -48,7 +56,8 @@ def test_consume_claude_json_streams_text_and_reads_usage():
                                "cache_read_input_tokens": 7293}}),
     ]
     written = []
-    text, usage = _consume_claude_json(lines, written.append)
+    parser = consume("claude", lines, written.append)
+    text, usage = parser.text, parser.usage
     assert "pong" in text
     assert usage["input"] == 2 and usage["output"] == 4
     assert usage["context"] == 2 + 9124 + 7293   # prompt + cache
@@ -58,12 +67,11 @@ def test_consume_claude_json_streams_text_and_reads_usage():
 
 def test_consume_json_sanitizes_surrogates():
     import json as _json
-    from orchestrator.runner import _consume_opencode_json
     # json can carry an escaped lone surrogate that would crash a strict stream
     payload = _json.dumps({"type": "text", "part": {"text": "po"}})
     surrogate = '{"type":"text","part":{"text":"\\udcd0ng"}}'
     written = []
-    text, usage = _consume_opencode_json([payload, surrogate], written.append)
+    text = consume("opencode", [payload, surrogate], written.append).text
     joined = "".join(written)
     # no lone surrogate survives into captured text or the live stream
     assert all(not (0xD800 <= ord(c) <= 0xDFFF) for c in text)
@@ -72,9 +80,8 @@ def test_consume_json_sanitizes_surrogates():
 
 
 def test_consume_opencode_json_tolerates_non_json_line():
-    from orchestrator.runner import _consume_opencode_json
     written = []
-    text, usage = _consume_opencode_json(["not json at all"], written.append)
+    usage = consume("opencode", ["not json at all"], written.append).usage
     assert "not json" in "".join(written)
     assert usage["input"] == 0
 
